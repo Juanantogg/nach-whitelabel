@@ -44,8 +44,11 @@ Por paquete: `pnpm --filter @nach/frontend <script>`.
   componente.
 - **Backend en capas**: `routes → controllers → services`. `app.ts` construye la
   app (testeable con Supertest); `server.ts` conecta Mongo y abre el puerto.
-- **Cifrado**: AES simétrico con clave por variable de entorno. Nunca hardcodear
-  claves ni subir `.env` (ver `.env.example`).
+- **Cifrado**: híbrido asimétrico. El backend guarda la clave **privada** (por
+  variable de entorno, nunca sale del servidor) y sirve la **pública**; el front
+  cifra con la pública (Web Crypto API, sin secreto en el bundle) y el back
+  descifra con la privada. Nunca hardcodear claves ni subir `.env` (ver
+  `.env.example` y `docs/seguridad.md`).
 - **Tests**: Vitest en ambos lados. Front con Testing Library; back con Supertest.
   Priorizar: lógica de cifrado, hook de voz, y render multi-marca.
 
