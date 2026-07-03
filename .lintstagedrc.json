@@ -1,0 +1,5 @@
+{
+  "frontend/**/*.{ts,tsx}": ["prettier --write", "bash -c 'cd frontend && eslint --fix'"],
+  "backend/**/*.ts": ["prettier --write", "bash -c 'cd backend && eslint --fix'"],
+  "*.{js,json,css,yaml,yml}": "prettier --write"
+}
