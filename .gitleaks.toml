@@ -1,0 +1,35 @@
+# Configuración de gitleaks — detección de secretos antes de commit/push.
+# Extiende el conjunto de reglas por defecto (AWS, GitHub, claves privadas, etc.)
+# y añade las específicas de este proyecto.
+#
+# Relevante para Grupo Salinas / Banco Azteca / Elektra: la clave PRIVADA de
+# descifrado (cifrado híbrido asimétrico, ver docs/seguridad.md) y la cadena de
+# conexión de Mongo son los secretos críticos.
+#
+# La clave privada se detecta con las reglas por defecto (bloque
+# -----BEGIN PRIVATE KEY-----). Las reglas custom cubren el resto.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "nach-crypto-secret"
+description = "Clave de cifrado hex del proyecto (CRYPTO_SECRET / CRYPTO_*_KEY inline)"
+# Red por si alguien reintrodujera una clave simétrica hex en un .env real.
+regex = '''(?i)(?:vite_)?crypto_(?:secret|key)\s*[:=]\s*['"]?([a-f0-9]{32,})['"]?'''
+keywords = ["crypto_secret", "crypto_key"]
+
+[[rules]]
+id = "nach-mongodb-uri"
+description = "Cadena de conexión de MongoDB con credenciales embebidas"
+regex = '''mongodb(?:\+srv)?://[^\s:@/]+:[^\s:@/]+@'''
+keywords = ["mongodb"]
+
+[allowlist]
+description = "Placeholders y ejemplos que no son secretos reales"
+# El .env.example lleva valores de relleno a propósito.
+paths = ['''\.env\.example$''']
+regexes = [
+  '''BEGIN PRIVATE KEY-----\\n\.\.\.\\n-----END''',
+  '''<user>:<pass>@<cluster>''',
+]

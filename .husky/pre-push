@@ -1,0 +1,4 @@
+# Red de seguridad antes de push: el código debe compilar y los tests pasar.
+# (Los `.only` en tests se bloquean antes, en el pre-commit, vía la regla
+#  ESLint vitest/no-focused-tests que corre lint-staged.)
+pnpm typecheck && pnpm -r test

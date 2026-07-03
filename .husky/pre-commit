@@ -1,1 +1,15 @@
+# Detección de secretos en lo staged (clave de cifrado, credenciales de Mongo…).
+# Corre gitleaks vía Docker para no depender de una instalación local.
+# Si Docker no está disponible, avisa pero no bloquea: el CI es la red dura.
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  docker run --rm -v "$(pwd):/repo" -w /repo zricethezav/gitleaks:latest \
+    git --pre-commit --staged --config=/repo/.gitleaks.toml --redact --no-banner \
+    || {
+      echo "❌ gitleaks detectó un posible secreto en lo staged. Commit abortado."
+      exit 1
+    }
+else
+  echo "⚠️  gitleaks omitido (Docker no disponible). El CI hará el escaneo de secretos."
+fi
+
 pnpm exec lint-staged
