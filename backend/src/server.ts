@@ -8,7 +8,7 @@ async function bootstrap(): Promise<void> {
 
   const app = createApp();
   app.listen(env.port, () => {
-    console.log(`🚀 nach-backend escuchando en http://localhost:${env.port}`);
+    console.info(`🚀 nach-backend escuchando en http://localhost:${env.port}`);
   });
 }
 

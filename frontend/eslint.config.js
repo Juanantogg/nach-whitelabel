@@ -4,13 +4,14 @@ import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
+import vitest from '@vitest/eslint-plugin';
 import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   { ignores: ['dist', 'coverage'] },
   {
     files: ['**/*.{ts,tsx}'],
-    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    extends: [js.configs.recommended, ...tseslint.configs.recommendedTypeChecked],
     plugins: {
       'react-hooks': reactHooks,
       'react-refresh': reactRefresh,
@@ -19,11 +20,25 @@ export default tseslint.config(
     languageOptions: {
       ecmaVersion: 2023,
       globals: globals.browser,
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
       ...jsxA11y.flatConfigs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // Evita que `console.log` de depuración se cuele en un commit.
+      'no-console': ['warn', { allow: ['warn', 'error', 'info'] }],
+    },
+  },
+  // En tests: prohíbe `.only` (desactivaría el resto de la suite en CI).
+  {
+    files: ['**/*.{test,spec}.{ts,tsx}'],
+    plugins: { vitest },
+    rules: {
+      'vitest/no-focused-tests': 'error',
     },
   },
   // Desactiva reglas de estilo que colisionan con Prettier (debe ir al final).
