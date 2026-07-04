@@ -63,7 +63,9 @@
         "Cada petición válida obtiene el siguiente consecutivo, sin colisiones ni huecos por diseño razonable",
         "Persistencia en Mongo vía Mongoose; el consecutivo sobrevive reinicios",
         "Lógica en la capa de services, testeable con Supertest sobre app.ts",
-        "Tests de la secuencia (RED antes de implementar)"
+        "Validación fail-fast del entorno con Zod al boot (MONGODB_URI requerida, CRYPTO_PRIVATE_KEY con formato PEM): ausente/inválida aborta el arranque en vez de fallar tarde (hoy env.ts usa `?? ''` y arranca en estado inseguro — ver docs/seguridad.md #1)",
+        "Validación del payload de entrada antes de descifrar/procesar (longitud del nombre ≤ 15, tipo): payload inválido se rechaza con 400, no se intenta descifrar (falla-cerrado — ver docs/seguridad.md #5)",
+        "Tests de la secuencia, de la validación de entorno y del rechazo de payload inválido (RED antes de implementar)"
       ],
       "status": "pending",
       "layer": "backend",
@@ -97,7 +99,58 @@
       ],
       "status": "pending",
       "layer": "fullstack",
-      "depends_on": ["brand_config", "crypto_hybrid", "consecutive_counter", "voice_capture"]
+      "depends_on": [
+        "brand_config",
+        "crypto_hybrid",
+        "consecutive_counter",
+        "voice_capture",
+        "frontend_infra"
+      ]
+    },
+    {
+      "name": "backend_hardening",
+      "title": "Endurecimiento del backend Express (seguridad/ops)",
+      "description": "Buenas prácticas de producción para @nach/backend, recogidas en la revisión de fin de Fase 0 (detalle de seguridad en docs/seguridad.md). NO es requisito del enunciado, pero sostiene el criterio de evaluación 'buenas prácticas'. Se monta al cablear los endpoints reales de cifrado/contador, no antes.",
+      "requires_approval": false,
+      "decisions": [
+        "cors + helmet son necesarios ya (cross-origin front↔back); allowlist de orígenes desde config, nunca '*' en prod. Ver docs/seguridad.md.",
+        "Manejador de errores centralizado: Express 5 reenvía los rechazos async solo; devuelve JSON de error consistente y NO filtra stack traces en producción.",
+        "Graceful shutdown (SIGTERM/SIGINT): dejar de aceptar conexiones, cerrar Mongoose y salir — estándar en contenedores/App Runner.",
+        "pino + pino-http como logging estructurado antes de los endpoints reales (hoy console.*).",
+        "express-rate-limit en el endpoint de escritura: OPCIONAL, solo si sobra tiempo.",
+        "Menores: quitar @types/express (Express 5 trae sus tipos) y añadir .nvmrc/.node-version acorde a engines.node."
+      ],
+      "acceptance": [
+        "cors (allowlist desde config) + helmet activos en app.ts; sin errores de CORS front↔back",
+        "Manejador de errores centralizado que responde JSON consistente y no filtra stack traces en prod",
+        "Graceful shutdown: SIGTERM/SIGINT cierran el servidor HTTP y la conexión Mongoose ordenadamente",
+        "Logging estructurado con pino/pino-http en lugar de console.*",
+        "Menores: @types/express eliminado de devDependencies; .nvmrc/.node-version presentes",
+        "Tests del middleware (cors/helmet/errorHandler) sobre app.ts con Supertest (RED antes de implementar)"
+      ],
+      "status": "pending",
+      "layer": "backend",
+      "depends_on": ["consecutive_counter"]
+    },
+    {
+      "name": "frontend_infra",
+      "title": "Infraestructura del frontend (config env, capa API, ErrorBoundary)",
+      "description": "Andamiaje de buenas prácticas de @nach/frontend recogido en la revisión de fin de Fase 0 (detalle de seguridad en docs/seguridad.md). NO es requisito del enunciado; centraliza el acceso al backend y la resiliencia antes de montar el flujo completo. El ThemeProvider y src/brand/* ya se hicieron en brand_config; el favicon ya existe.",
+      "requires_approval": false,
+      "decisions": [
+        "src/config/env.ts: acceso tipado y validado a import.meta.env.VITE_* (VITE_API_URL, VITE_DEFAULT_BRAND), espejo del env.ts del backend. El front NO lleva clave de cifrado (obtiene la pública del backend en runtime).",
+        "src/api/*: módulo dedicado que centraliza fetch, base URL y manejo de errores, antes de escribir componentes que llaman al backend.",
+        "ErrorBoundary de nivel raíz envolviendo <App /> para que un fallo de cifrado/red no deje la app en blanco."
+      ],
+      "acceptance": [
+        "Existe src/config/env.ts con acceso tipado y validado a las VITE_* necesarias (VITE_API_URL, VITE_DEFAULT_BRAND)",
+        "Existe una capa src/api/* que centraliza fetch, base URL y manejo de errores del backend",
+        "Un ErrorBoundary de nivel raíz envuelve <App /> y muestra un fallback ante fallos de render/cifrado/red",
+        "Tests de la validación de env, del cliente API (fetch mockeado) y del ErrorBoundary (RED antes de implementar)"
+      ],
+      "status": "pending",
+      "layer": "frontend",
+      "depends_on": ["brand_config"]
     },
     {
       "name": "deploy",
@@ -125,7 +178,7 @@
       ],
       "status": "pending",
       "layer": "fullstack",
-      "depends_on": ["welcome_screen"]
+      "depends_on": ["welcome_screen", "backend_hardening"]
     },
     {
       "name": "records_list",

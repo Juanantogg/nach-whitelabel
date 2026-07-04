@@ -71,22 +71,28 @@ directamente en un archivo de código.
 - **Lint type-aware** (`recommendedTypeChecked`) — `no-floating-promises` y
   `no-unsafe-*` reducen bugs en la lógica async de cifrado.
 
-## Pendientes de seguridad ⚠️
+## Óptica de seguridad de los pendientes ⚠️
 
-Estos se solapan con `backend-pendientes.md` / `frontend-pendientes.md`; aquí van
-vistos desde la óptica de seguridad.
+> **Fuentes de verdad.** El *qué hacer* y su orden viven en `feature_list.json`
+> (features `backend_hardening` / `frontend_infra` y la validación de entorno en
+> `consecutive_counter`). Este documento **no repite el backlog**: aporta el *por
+> qué* y las reglas de seguridad que cada feature debe respetar. Si el qué y el
+> por qué discrepan, el JSON manda en el qué; este doc en el razonamiento.
 
 ### 1. Validación fail-fast del entorno · Prioridad ALTA
 
-`backend/src/config/env.ts` deja las variables críticas en `''` por defecto.
-Riesgo: el servidor **arranca igual** con una `CRYPTO_PRIVATE_KEY` vacía o una
-`MONGODB_URI` ausente, y el fallo aparece tarde (al primer descifrado / primera
-query) o, peor, corre en un estado inseguro sin avisar.
+→ Backlog: acceptance de **`consecutive_counter`** en `feature_list.json`.
 
-- **Acción:** validar el entorno con Zod **al boot**, en `config/env.ts`, y abortar
-  el arranque (exit ≠ 0 con mensaje claro) si algo no cuadra. La app consume el
-  objeto ya validado y tipado, nunca `process.env`.
-- **Variables requeridas** (tras la decisión de cifrado asimétrico):
+**Riesgo de seguridad (el por qué):** `backend/src/config/env.ts` deja las
+variables críticas en `''` por defecto, así que el servidor **arranca igual** con
+una `CRYPTO_PRIVATE_KEY` vacía o inválida. Eso no es solo falta de robustez: es el
+escenario silencioso de "cifrado activado pero clave inválida", que puede degradar
+a un estado sin cifrado efectivo **sin que nadie lo note**. Por eso la validación
+debe cargar realmente la clave (no solo mirar que no esté vacía) y **fallar
+cerrado** (exit ≠ 0), nunca abrir.
+
+**Reglas de validación que la implementación debe cumplir** (tras la decisión de
+cifrado asimétrico):
 
   | Variable | Regla de validación |
   | --- | --- |
@@ -94,11 +100,6 @@ query) o, peor, corre en un estado inseguro sin avisar.
   | `MONGODB_URI` | No vacía; empieza por `mongodb://` o `mongodb+srv://`. |
   | `PORT` | Entero válido; default 3001. |
   | `NODE_ENV` | `development` \| `production` \| `test`; default `development`. |
-
-- **Por qué es de seguridad, no solo de robustez:** validar que la clave privada
-  es un PEM real evita el escenario silencioso de "cifrado activado pero clave
-  inválida", que podría degradar a un estado sin cifrado efectivo sin que nadie lo
-  note.
 
 ### 2. Esquema de cifrado — decisión de arquitectura · Prioridad ALTA
 
@@ -145,7 +146,8 @@ Ventajas para la evaluación:
 > `.env.example` y de `CLAUDE.md`; el front no lleva ningún secreto. El backend
 > guarda solo su clave **privada** (`CRYPTO_PRIVATE_KEY`) en `.env`. La regla
 > gitleaks se ajustó al nuevo esquema (la clave privada la detectan las reglas por
-> defecto). Pendiente: implementar el cifrado en sí (fase de lógica).
+> defecto). El cifrado en sí ya está implementado (feature `crypto_hybrid`,
+> `status: done`).
 
 #### ¿Por qué la clave pública puede cifrar pero no descifrar?
 
@@ -210,37 +212,50 @@ defensa técnica del ejercicio.
 
 ### 3. Cabeceras y CORS · Prioridad ALTA (cors) / MEDIA (helmet)
 
-- **`cors`** — **necesario ya**: el front (`:5173` en dev) llamando al backend
-  (`:3001`) es cross-origin; sin CORS el navegador bloquea la respuesta.
-  - Restringir a una **allowlist de orígenes** leída de config (`env.ts`), **no**
-    `origin: '*'`. Encaja con el enfoque white-label: cada marca/entorno puede
-    desplegarse en un dominio distinto, así que el/los orígenes permitidos deben
-    ser configurables, no literales en el código.
-  - Definir métodos permitidos (`GET`, `POST`) y `credentials` según se usen
-    cookies (por ahora no; documentarlo).
-  - En Express 5 el **orden importa**: montar `cors` (y `helmet`) **antes** de las
-    rutas.
-- **`helmet`** — cabeceras de seguridad (HSTS, `X-Content-Type-Options: nosniff`,
-  etc.). Una línea `app.use(helmet())` cubre la base.
+→ Backlog: acceptance de **`backend_hardening`** en `feature_list.json`.
+
+**Reglas de seguridad que la implementación debe respetar (el por qué):**
+
+- **`cors`** debe restringirse a una **allowlist de orígenes** leída de config
+  (`env.ts`), **nunca** `origin: '*'`. Encaja con el enfoque white-label: cada
+  marca/entorno se despliega en un dominio distinto, así que los orígenes
+  permitidos son configurables, no literales en el código. Métodos acotados
+  (`GET`, `POST`); `credentials` solo si se usan cookies (por ahora no).
+- En Express 5 el **orden importa**: `cors` y `helmet` van **antes** de las rutas.
+- **`helmet`** aporta las cabeceras base (HSTS, `X-Content-Type-Options: nosniff`,
+  etc.).
 
 ### 4. Rate limiting · Prioridad MEDIA
 
-`express-rate-limit` en el endpoint de escritura para mitigar abuso/fuerza bruta.
+→ Backlog: opcional dentro de **`backend_hardening`**.
+
+**Por qué:** `express-rate-limit` en el endpoint de escritura mitiga abuso y
+fuerza bruta. Es defensa en profundidad, no crítico para la prueba.
 
 ### 5. Validación de entrada · Prioridad MEDIA
 
-Validar y acotar el payload de entrada (longitud del nombre, tipo) antes de
-descifrar/procesar. Evita payloads maliciosos y errores no controlados.
+→ Backlog: acceptance del endpoint de escritura en **`consecutive_counter`**.
+
+**Por qué:** validar y acotar el payload (longitud del nombre ≤ 15 como en las
+maquetas, tipo) **antes** de descifrar/procesar evita payloads maliciosos y
+errores no controlados. Falla-cerrado: rechazar con 400, no intentar descifrar
+basura.
 
 ## Checklist rápido
+
+Garantías de seguridad **ya en su sitio** (lo pendiente vive en `feature_list.json`,
+ver punteros §1 y §3-5):
 
 - [x] `.env` en `.gitignore`, sin secretos trackeados
 - [x] gitleaks en pre-commit + CI
 - [x] `no-console` para no filtrar PII por logs
 - [x] Esquema de cifrado decidido: híbrido asimétrico (sin secreto en el front)
 - [x] `VITE_CRYPTO_SECRET` eliminado de `.env.example` y `CLAUDE.md`
-- [ ] Validación fail-fast del entorno (Zod)
-- [x] Implementar el cifrado híbrido (clave pública en front, privada solo en back)
-- [ ] `cors` restringido + `helmet`
-- [ ] Rate limiting en escritura
-- [ ] Validación de payload de entrada
+- [x] Cifrado híbrido implementado (clave pública en front, privada solo en back) — `crypto_hybrid` done
+
+Pendientes con óptica de seguridad (**el qué en el backlog**):
+
+- Validación fail-fast del entorno con Zod → `consecutive_counter`
+- `cors` restringido + `helmet` → `backend_hardening`
+- Rate limiting en escritura (opcional) → `backend_hardening`
+- Validación de payload de entrada → `consecutive_counter`
