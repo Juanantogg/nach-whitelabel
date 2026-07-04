@@ -28,6 +28,19 @@ import {
 } from '../services/__test__/cryptoTestKit.js';
 
 /**
+ * Mock del `counter.service`: el consecutivo real se persiste en Mongo vía
+ * `createRecord`. Estos tests de endpoint NO arrancan Mongo, así que sin este
+ * mock `createRecord` haría buffering de Mongoose sin conexión y el test 200 se
+ * colgaría hasta el timeout. Mockeamos el borde (el service) devolviendo un
+ * número resuelto, sin tocar la lógica de cifrado bajo prueba. El registro de
+ * mocks de Vitest persiste a través de `vi.resetModules()`, por lo que el
+ * `import('../app.js')` dinámico de cada bloque recibe siempre el service mockeado.
+ */
+vi.mock('../services/counter.service.js', () => ({
+  createRecord: vi.fn().mockResolvedValue(1),
+}));
+
+/**
  * Formas del body de respuesta. Supertest tipa `res.body` como `any`; se castea
  * a estas interfaces para no acceder a miembros de un `any` (regla
  * `no-unsafe-member-access`). No cambia ninguna aserción.
@@ -114,7 +127,7 @@ describe('POST /names — round-trip end-to-end', () => {
       { iv: body.iv ?? '', ciphertext: body.ciphertext ?? '' },
       env.sessionKey,
     );
-    expect(numero).toMatch(/^\d+$/); // consecutivo stub: un número
+    expect(numero).toMatch(/^\d+$/); // consecutivo del service mockeado: un número
   });
 
   it('devuelve 422 decryption_failed si el tag GCM del nombre fue manipulado', async () => {

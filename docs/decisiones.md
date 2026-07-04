@@ -148,3 +148,48 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
 - **Listado de registros generados** (nombre + nº consecutivo desde Mongo) es un
   **extra opcional** posterior al core; se llama "registros", no "usuarios", para no
   inventar un dominio que el enunciado no plantea.
+
+## 11. Gestión de secretos en producción: clusters separados + Parameter Store
+
+- **Contexto:** en desarrollo el backend lee sus secretos de un `backend/.env`
+  local (gitignoreado): `MONGODB_URI` (un cluster Atlas M0 de dev) y
+  `CRYPTO_PRIVATE_KEY` (el PEM del cifrado híbrido). Para el deploy hay que decidir
+  **dónde viven esos mismos secretos en producción**, sin que toquen el repo ni el
+  bundle. AWS ofrece dos servicios: **Secrets Manager** (de pago, ~$0.40/secreto/mes
+  + coste por API call, con rotación automática) y **Systems Manager Parameter
+  Store** (SecureString **gratis** en su tier estándar, cifrado con KMS, integrado
+  con App Runner).
+- **Decisión:**
+  - **Clusters de base de datos SEPARADOS dev vs prod.** El de dev es de uso local
+    (Network Access laxo, credencial de dev); el de prod tiene **usuario y
+    contraseña propios** y Network Access **restringido** (idealmente a los rangos
+    de App Runner, nunca `0.0.0.0/0`). Una credencial de dev filtrada no da acceso
+    a los datos de prod.
+  - **Secretos de prod en AWS Parameter Store como SecureString** (no Secrets
+    Manager). Van ahí **tanto `MONGODB_URI`** (la del cluster de prod, completa)
+    **como `CRYPTO_PRIVATE_KEY`** (el PEM) — la clave privada es tan sensible como
+    la base de datos. App Runner los inyecta como variables de entorno en runtime;
+    ninguno se escribe en el repo ni viaja en el bundle del front.
+- **Por qué:**
+  - **Parameter Store SecureString es gratis** y suficiente para esta prueba: cifra
+    en reposo con KMS y se integra nativamente con App Runner. La rotación
+    automática de Secrets Manager es su única ventaja real aquí, y no justifica el
+    coste recurrente en un montaje que además se apaga tras la evaluación (ADR 9).
+  - Separar clusters es defensa en profundidad: el `.env` de dev es el eslabón más
+    expuesto (se comparte, se pega en chats, tiene red abierta), así que **nunca**
+    debe compartir credencial ni datos con producción.
+  - Coherente con el principio ya establecido de que la clave privada solo vive en
+    el servidor por variable de entorno (ADR 6, `seguridad.md`): en prod esa
+    variable la sirve Parameter Store, no un archivo.
+- **Descartado:**
+  - **AWS Secrets Manager:** de pago; su rotación automática no aporta a una prueba
+    técnica de vida corta. Coste sin beneficio proporcional.
+  - **Reutilizar el cluster de dev en producción:** acoplaría la seguridad de prod
+    a una credencial de dev laxa y potencialmente expuesta.
+  - **Secretos como env vars en texto plano en la consola de App Runner** (sin
+    Parameter Store): visibles a cualquiera con acceso de lectura a la config del
+    servicio; SecureString las mantiene cifradas.
+- **Higiene operativa:** si una credencial de dev se expone (p.ej. al compartir la
+  connection string), se **rota** en Atlas (Database Access → Edit Password) y se
+  actualiza el `.env` local; el cluster de prod no se ve afectado por ser
+  independiente.

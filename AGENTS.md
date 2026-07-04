@@ -100,6 +100,15 @@ tests para hacerlos pasar. El leader nunca escribe código de producción.
 **El leader nunca commitea sin el OK humano** en el gate pre-commit: presenta
 resumen + `git diff --stat` + veredictos + mensaje propuesto, y espera.
 
+**El GREEN de backend no está verificado hasta que el módulo CARGA en runtime,
+no solo hasta que los tests pasan.** Los tests de endpoint mockean los services y
+no importan los modelos reales, así que un import roto en ESM (p.ej. un named
+export que no existe, `import { models } from 'mongoose'`) pasa lint + typecheck +
+vitest y solo revienta en `pnpm dev`. Por eso: cuando una feature de backend añade
+modelos/servicios que los tests mockean, el implementer confirma la carga en
+runtime antes de dar el GREEN (`pnpm --filter @nach/backend smoke`, cableado
+también en `init.sh full`).
+
 ## Estado
 
 Fase 0 (dev harness + harness de agentes) **completa**: tooling, linting, tests

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { env } from '../config/env.js';
+import { createRecord } from '../services/counter.service.js';
 import {
   decryptName,
   encryptForClient,
@@ -9,8 +10,8 @@ import {
   type EncryptedPayload,
 } from '../services/crypto.service.js';
 
-/** Contador stub en memoria del proceso; el consecutivo real es de consecutive_counter. */
-let stubCounter = 0;
+/** Límite de longitud del nombre en claro (maquetas: "0/15 caracteres"). */
+const MAX_NAME_LENGTH = 15;
 
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
@@ -48,11 +49,11 @@ export function getPublicKey(_req: Request, res: Response): void {
 }
 
 /**
- * POST /names — descifra el nombre, genera un consecutivo (stub) y lo devuelve
- * cifrado con la misma clave de sesión (IV nuevo). Traduce fallos a 400/422/500
- * sin filtrar detalle criptográfico.
+ * POST /names — descifra el nombre, genera y persiste un consecutivo real y lo
+ * devuelve cifrado con la misma clave de sesión (IV nuevo). Traduce fallos a
+ * 400/422/500 sin filtrar detalle criptográfico.
  */
-export function postName(req: Request, res: Response): void {
+export async function postName(req: Request, res: Response): Promise<void> {
   const payload = parsePayload(req.body);
   if (payload === null) {
     res.status(400).json({ error: 'invalid_payload' });
@@ -75,14 +76,22 @@ export function postName(req: Request, res: Response): void {
     return;
   }
 
-  // Techo defensivo de tamaño del nombre descifrado (no procesar payloads absurdos).
-  if (name.length > 256) {
+  // Validación de negocio del nombre en claro (falla-cerrado): antes de reservar
+  // consecutivo o persistir, para no gastar número por un payload inválido.
+  if (name.length > MAX_NAME_LENGTH) {
     res.status(400).json({ error: 'invalid_payload' });
     return;
   }
 
-  // Consecutivo STUB (número); la generación real persistida es de consecutive_counter.
-  stubCounter += 1;
-  const envelope = encryptForClient(String(stubCounter), sessionKey);
+  // Consecutivo real persistido en Mongo (capa de services).
+  let numero: number;
+  try {
+    numero = await createRecord(name);
+  } catch {
+    res.status(500).json({ error: 'internal_error' });
+    return;
+  }
+
+  const envelope = encryptForClient(String(numero), sessionKey);
   res.status(200).json(envelope);
 }

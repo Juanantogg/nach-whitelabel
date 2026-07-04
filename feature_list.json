@@ -67,7 +67,7 @@
         "Validación del payload de entrada antes de descifrar/procesar (longitud del nombre ≤ 15, tipo): payload inválido se rechaza con 400, no se intenta descifrar (falla-cerrado — ver docs/seguridad.md #5)",
         "Tests de la secuencia, de la validación de entorno y del rechazo de payload inválido (RED antes de implementar)"
       ],
-      "status": "pending",
+      "status": "done",
       "layer": "backend",
       "depends_on": ["crypto_hybrid"]
     },
@@ -162,7 +162,8 @@
         "Certificado ACM con SAN por subdominio (elektra.garcia3apps.com, shopinbaz.garcia3apps.com), no wildcard. En us-east-1 (requisito de CloudFront).",
         "Front: S3 (estático) + CloudFront, un comportamiento por subdominio; cada subdominio carga su JSON de marca desde S3. Coste ~0 (free tier).",
         "Backend: Express en AWS App Runner (corre el Express tal cual, sin adaptador serverless). ⚠️ NO es free tier (~$5-25/mes): APAGAR o eliminar el servicio tras la evaluación. Único gasto recurrente del montaje.",
-        "Base de datos: MongoDB Atlas M0 (gratis). El consecutivo persiste ahí.",
+        "Base de datos: MongoDB Atlas M0 (gratis). El consecutivo persiste ahí. Clusters SEPARADOS dev vs prod: el de dev es local (Network Access laxo, credencial de dev); el de prod tiene usuario/contraseña PROPIOS y Network Access restringido (idealmente a los rangos de App Runner, nunca 0.0.0.0/0).",
+        "Secretos en prod vía AWS Systems Manager Parameter Store como SecureString (GRATIS en tier estándar, integrado con App Runner) — NO AWS Secrets Manager (de pago, ~$0.40/secreto/mes; su rotación automática no aporta para esta prueba). A Parameter Store van tanto MONGODB_URI (del cluster de prod, completa) como CRYPTO_PRIVATE_KEY (el PEM). Ninguna en el repo ni en el bundle. Ver docs/decisiones.md ADR 11.",
         "El bucket de los JSON de marca es de lectura pública (o vía CloudFront) con CORS habilitado para los subdominios; sin credenciales AWS en el front.",
         "Riesgo a vigilar: HTTPS + CORS front↔back impecables (el evaluador abre DevTools). Cero mixed-content ni errores de CORS.",
         "Plan B si el tiempo aprieta: URL por defecto de CloudFront + selección por ?brand= (sin tocar DNS). brand_config funciona igual por su fallback."
@@ -173,7 +174,7 @@
         "Backend Express desplegado en App Runner y accesible por HTTPS; sin errores de CORS ni mixed-content en la consola del navegador",
         "MongoDB Atlas conectado; el consecutivo persiste en el entorno desplegado",
         "Los JSON de marca viven en S3 y el front los carga por subdominio",
-        "Variables de entorno (incl. clave privada de cifrado) configuradas en App Runner, nunca en el repo",
+        "Secretos de prod (MONGODB_URI del cluster de prod + CRYPTO_PRIVATE_KEY) en AWS Parameter Store (SecureString, gratis), inyectados como env en App Runner; nunca en el repo ni en el bundle. Cluster de prod separado del de dev, con credencial propia",
         "README documenta URLs, layout de S3, el cableado en AWS (Route 53 registros nombrados + CloudFront + ACM SAN + App Runner) y el recordatorio de apagar App Runner"
       ],
       "status": "pending",

@@ -12,6 +12,10 @@ build/
 .env.local
 .env.*.local
 
+# Material criptográfico local (generado por dev; nunca al repo). La privada va
+# en .env; la pública se sirve por endpoint. Ver docs/seguridad.md.
+*.pem
+
 # Logs
 *.log
 npm-debug.log*

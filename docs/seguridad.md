@@ -71,6 +71,36 @@ directamente en un archivo de código.
 - **Lint type-aware** (`recommendedTypeChecked`) — `no-floating-promises` y
   `no-unsafe-*` reducen bugs en la lógica async de cifrado.
 
+### Fail-fast del entorno + validación de entrada (feature `consecutive_counter`)
+
+Implementados los pendientes §1 (ALTA) y §5 (MEDIA) de este documento. Auditado
+en `progress/consecutive_counter/security.md` (veredicto **APTO**).
+
+- **Fail-fast del entorno con Zod** — `backend/src/config/env.ts:22-42,61-76`
+  (`validateEnv`) + `backend/src/server.ts:6-25` (boot). Valida `MONGODB_URI`
+  (requerida, prefijo `mongodb://` / `mongodb+srv://`) y `CRYPTO_PRIVATE_KEY`
+  **cargándola de verdad** con `crypto.createPrivateKey` (no solo el prefijo
+  `-----BEGIN`). Entorno inválido → `process.exit(1)` **antes** de `connectDb()`
+  y de `app.listen()`: falla cerrado, nunca abre en estado "cifrado activo pero
+  clave inválida". `env.ts` NO aborta al importarse (para no romper tests); el
+  fail-fast real vive en `server.ts`. Verificado que el log del error
+  (`error.issues`) **no filtra** el valor de la clave ni las credenciales de
+  Mongo.
+- **Validación de entrada (falla-cerrado)** —
+  `backend/src/controllers/crypto.controller.ts:81-84`. Longitud del nombre en
+  claro `> 15` → `400 invalid_payload` **antes** de reservar consecutivo o
+  persistir (no se gasta número). El techo defensivo previo (256) se sustituyó
+  por 15, con `maxlength: 15` en el modelo Mongo (`record.model.ts:16`) como
+  defensa en profundidad. Los errores devueltos son códigos genéricos
+  (`invalid_payload` / `decryption_failed` / `crypto_unavailable` /
+  `internal_error`), sin stack, sin detalle criptográfico ni el nombre del
+  usuario.
+- **Persistencia de PII** — se guarda el nombre en claro (alias ≤15) + el
+  consecutivo (`record.model.ts`, `counter.service.ts`). NO se persiste material
+  criptográfico (ni clave de sesión, ni IV, ni ciphertext, ni la privada).
+  Implicación para `records_list` anotada en su acceptance (respetar la
+  privacidad acordada).
+
 ## Óptica de seguridad de los pendientes ⚠️
 
 > **Fuentes de verdad.** El *qué hacer* y su orden viven en `feature_list.json`
@@ -79,7 +109,7 @@ directamente en un archivo de código.
 > qué* y las reglas de seguridad que cada feature debe respetar. Si el qué y el
 > por qué discrepan, el JSON manda en el qué; este doc en el razonamiento.
 
-### 1. Validación fail-fast del entorno · Prioridad ALTA
+### 1. Validación fail-fast del entorno · Prioridad ALTA · ✅ IMPLEMENTADO
 
 → Backlog: acceptance de **`consecutive_counter`** en `feature_list.json`.
 
@@ -100,6 +130,11 @@ cifrado asimétrico):
   | `MONGODB_URI` | No vacía; empieza por `mongodb://` o `mongodb+srv://`. |
   | `PORT` | Entero válido; default 3001. |
   | `NODE_ENV` | `development` \| `production` \| `test`; default `development`. |
+
+> **Estado (implementado en `consecutive_counter`):** cumplido. La clave se
+> carga con `crypto.createPrivateKey` (`env.ts:23-30`) y el arranque aborta
+> antes de aceptar tráfico (`server.ts:8-17`). Ver bloque "Implementado ✅"
+> y `progress/consecutive_counter/security.md`.
 
 ### 2. Esquema de cifrado — decisión de arquitectura · Prioridad ALTA
 
@@ -232,7 +267,7 @@ defensa técnica del ejercicio.
 **Por qué:** `express-rate-limit` en el endpoint de escritura mitiga abuso y
 fuerza bruta. Es defensa en profundidad, no crítico para la prueba.
 
-### 5. Validación de entrada · Prioridad MEDIA
+### 5. Validación de entrada · Prioridad MEDIA · ✅ IMPLEMENTADO
 
 → Backlog: acceptance del endpoint de escritura en **`consecutive_counter`**.
 
@@ -240,6 +275,10 @@ fuerza bruta. Es defensa en profundidad, no crítico para la prueba.
 maquetas, tipo) **antes** de descifrar/procesar evita payloads maliciosos y
 errores no controlados. Falla-cerrado: rechazar con 400, no intentar descifrar
 basura.
+
+> **Estado (implementado en `consecutive_counter`):** cumplido.
+> `crypto.controller.ts:81-84` rechaza `>15` con 400 antes de descifrar
+> consecutivo/persistir. Ver `progress/consecutive_counter/security.md`.
 
 ## Checklist rápido
 
@@ -255,7 +294,7 @@ ver punteros §1 y §3-5):
 
 Pendientes con óptica de seguridad (**el qué en el backlog**):
 
-- Validación fail-fast del entorno con Zod → `consecutive_counter`
+- [x] Validación fail-fast del entorno con Zod → `consecutive_counter` (implementado)
 - `cors` restringido + `helmet` → `backend_hardening`
 - Rate limiting en escritura (opcional) → `backend_hardening`
-- Validación de payload de entrada → `consecutive_counter`
+- [x] Validación de payload de entrada → `consecutive_counter` (implementado)
