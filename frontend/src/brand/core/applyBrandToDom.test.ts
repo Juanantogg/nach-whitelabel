@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { applyBrandToDom } from './applyBrandToDom';
 import { parseBrandConfig } from './schema';
-import shopinbazSeed from './seeds/shopinbaz.json';
-import elektraSeed from './seeds/elektra.json';
+import shopinbazSeed from '../seeds/shopinbaz.json';
+import elektraSeed from '../seeds/elektra.json';
 
 /**
  * Acceptance #6: "ThemeProvider inyecta las CSS variables --brand-* en :root;

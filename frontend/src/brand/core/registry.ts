@@ -1,5 +1,5 @@
 import { parseBrandConfig, type BrandConfig, type BrandKey } from './schema';
-import defaultRaw from './data/default.json';
+import defaultRaw from '../data/default.json';
 
 /**
  * Key de la marca genérica de fallback. En prod, si el subdominio no resuelve a

@@ -1,9 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ThemeProvider, useBrand } from './ThemeProvider';
-import { parseBrandConfig } from './schema';
-import shopinbazSeed from './seeds/shopinbaz.json';
-import elektraSeed from './seeds/elektra.json';
+import { ThemeProvider } from './ThemeProvider';
+import { useBrand } from './useBrand';
+import { parseBrandConfig } from '../core/schema';
+import shopinbazSeed from '../seeds/shopinbaz.json';
+import elektraSeed from '../seeds/elektra.json';
 
 /**
  * Acceptance #7: "Textos, estilos visuales e ilustración vienen de la config de

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { loadBrand } from './loadBrand';
 import { DEFAULT_BRAND } from './registry';
 import { parseBrandConfig } from './schema';
-import elektraSeed from './seeds/elektra.json';
+import elektraSeed from '../seeds/elektra.json';
 
 /**
  * Acceptance #2: "El front carga la marca: en prod fetch desde S3 por

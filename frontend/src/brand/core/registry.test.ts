@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as registry from './registry';
 import { DEFAULT_BRAND, DEFAULT_BRAND_KEY } from './registry';
 import { parseBrandConfig } from './schema';
-import shopinbazSeed from './seeds/shopinbaz.json';
-import elektraSeed from './seeds/elektra.json';
+import shopinbazSeed from '../seeds/shopinbaz.json';
+import elektraSeed from '../seeds/elektra.json';
 
 /**
  * Acceptance #5 reinterpretado (Rev.2): el fallback offline ahora es UN default

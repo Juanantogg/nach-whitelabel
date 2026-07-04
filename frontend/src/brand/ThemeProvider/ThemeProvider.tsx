@@ -1,8 +1,7 @@
-import { createContext, useContext, useEffect, type ReactNode } from 'react';
-import { applyBrandToDom } from './applyBrandToDom';
-import type { BrandConfig } from './schema';
-
-const BrandContext = createContext<BrandConfig | null>(null);
+import { useEffect, type ReactNode } from 'react';
+import { applyBrandToDom } from '../core/applyBrandToDom';
+import { BrandContext } from './brandContext';
+import type { BrandConfig } from '../core/schema';
 
 interface ThemeProviderProps {
   /**
@@ -17,6 +16,9 @@ interface ThemeProviderProps {
  * Provee la `BrandConfig` activa por Context (textos y rutas de asset para los
  * componentes) e inyecta sus CSS variables `--brand-*` en `:root`. Cambiar la
  * prop `config` re-aplica las variables sin recargar.
+ *
+ * El hook `useBrand` vive en `./useBrand` (módulo aparte) para no mezclar el
+ * export del componente con el del hook y romper el Fast Refresh de Vite.
  */
 export function ThemeProvider({ config, children }: ThemeProviderProps) {
   useEffect(() => {
@@ -24,13 +26,4 @@ export function ThemeProvider({ config, children }: ThemeProviderProps) {
   }, [config]);
 
   return <BrandContext.Provider value={config}>{children}</BrandContext.Provider>;
-}
-
-/** Devuelve la `BrandConfig` activa. Debe usarse dentro de un `ThemeProvider`. */
-export function useBrand(): BrandConfig {
-  const config = useContext(BrandContext);
-  if (config === null) {
-    throw new Error('useBrand debe usarse dentro de un <ThemeProvider>');
-  }
-  return config;
 }
