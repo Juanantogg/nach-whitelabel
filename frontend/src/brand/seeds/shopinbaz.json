@@ -1,0 +1,32 @@
+{
+  "key": "shopinbaz",
+  "name": "shopinbaz",
+  "text": {
+    "title": "¡Te damos la bienvenida a shopinbaz!",
+    "subtitle": "Usa tu préstamo como dinero en efectivo o compra en donde quieras.",
+    "namePrompt": "¿Cómo prefieres que te llamemos?",
+    "inputPlaceholder": "Escribe tu nombre",
+    "submitLabel": "Comenzar",
+    "counterTemplate": "{count}/{max} caracteres"
+  },
+  "colors": {
+    "bg": "23 22 26",
+    "surface": "38 36 43",
+    "primary": "170 59 255",
+    "accent": "170 59 255",
+    "text": "245 245 247",
+    "muted": "148 143 156"
+  },
+  "style": {
+    "radius": "0.75rem",
+    "fontFamily": "system-ui, sans-serif",
+    "titleWeight": "700",
+    "buttonVariant": "soft"
+  },
+  "assets": {
+    "logo": "/brands/shopinbaz/logo.svg",
+    "illustration": "/brands/shopinbaz/illustration.svg",
+    "logoAlt": "shopinbaz",
+    "illustrationAlt": "Ilustración de bienvenida shopinbaz"
+  }
+}

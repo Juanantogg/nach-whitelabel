@@ -1,0 +1,32 @@
+{
+  "key": "default",
+  "name": "Marca",
+  "text": {
+    "title": "¡Te damos la bienvenida!",
+    "subtitle": "Usa tu préstamo como dinero en efectivo o compra en donde quieras.",
+    "namePrompt": "¿Cómo prefieres que te llamemos?",
+    "inputPlaceholder": "Escribe tu nombre",
+    "submitLabel": "Comenzar",
+    "counterTemplate": "{count}/{max} caracteres"
+  },
+  "colors": {
+    "bg": "23 22 26",
+    "surface": "38 36 43",
+    "primary": "124 92 252",
+    "accent": "124 92 252",
+    "text": "245 245 247",
+    "muted": "148 143 156"
+  },
+  "style": {
+    "radius": "0.75rem",
+    "fontFamily": "system-ui, sans-serif",
+    "titleWeight": "700",
+    "buttonVariant": "soft"
+  },
+  "assets": {
+    "logo": "/brands/default/logo.svg",
+    "illustration": "/brands/default/illustration.svg",
+    "logoAlt": "Marca",
+    "illustrationAlt": "Ilustración de bienvenida"
+  }
+}

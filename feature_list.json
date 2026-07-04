@@ -35,7 +35,7 @@
         "Cambiar de marca no requiere editar ningún componente",
         "Test de render multi-marca: el mismo componente renderiza shopinbaz y elektra con textos, colores e ilustración distintos"
       ],
-      "status": "pending",
+      "status": "done",
       "layer": "frontend",
       "depends_on": []
     },
