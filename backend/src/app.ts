@@ -1,5 +1,7 @@
 import express, { type Express } from 'express';
 import { healthRouter } from './routes/health.routes.js';
+import { cryptoRouter } from './routes/crypto.routes.js';
+import { namesRouter } from './routes/names.routes.js';
 
 /**
  * Construye la app de Express sin arrancar el servidor ni conectar a Mongo.
@@ -12,6 +14,8 @@ export function createApp(): Express {
   app.use(express.json());
 
   app.use('/health', healthRouter);
+  app.use('/crypto', cryptoRouter);
+  app.use('/names', namesRouter);
 
   return app;
 }

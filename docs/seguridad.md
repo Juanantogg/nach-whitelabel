@@ -175,6 +175,39 @@ Matices (seguridad = **computacional**, no absoluta):
   ahí la criptografía post-cuántica. Irrelevante para esta prueba, pero es el
   contexto completo.
 
+#### De la prueba a producción (decisiones y sus límites)
+
+Varias decisiones de esta feature son **correctas también en producción**; otras
+son **atajos deliberados de alcance** para la prueba. Distinguirlos es parte de la
+defensa técnica del ejercicio.
+
+**Se mantienen igual en un producto real:**
+
+- Esquema híbrido RSA-OAEP + AES-GCM (patrón estándar TLS/JWE).
+- Clave privada solo en el servidor; el front no lleva ningún secreto.
+- AES-256-GCM (integridad autenticada), `oaepHash` SHA-256, IV aleatorio de 12
+  bytes sin reuse del par (clave, IV).
+- base64 estándar, claves SPKI/PKCS#8.
+
+**Atajos de "esta prueba" que cambiarían en un producto:**
+
+| # | Aquí (prueba) | En producción | Por qué el atajo es aceptable |
+| --- | --- | --- | --- |
+| 1 | Cifrado de aplicación sobre HTTP (ciframos el nombre a mano) | El transporte lo da TLS/HTTPS; el cifrado app-level solo se justifica para **E2E encryption** (el servidor no ve el dato) o **cifrado en reposo** | El **enunciado exige** cifrar en el cliente; sin ese requisito sería redundante con TLS |
+| 2 | Misma clave AES para ida y vuelta | Handshake **ECDH efímero** → *forward secrecy* (comprometer la privada no descifra tráfico pasado) | ECDH añade HKDF y gestión de efímeras; descartado por minimalismo (no lo pide el enunciado) |
+| 3 | RSA-2048 | RSA-3072/4096 o migración a ECC, y plan **post-cuántico** | 2048 es el mínimo aceptable hoy; suficiente para demostrar el esquema |
+| 4 | Consecutivo = stub en memoria | Contador persistido, atómico, sin colisiones | Reparto de features (`consecutive_counter`); el stub solo prueba el round-trip de vuelta |
+| 5 | Clave privada en variable de entorno | **KMS / Secrets Manager / HSM** con rotación; nunca en texto plano en el entorno | Env var es lo razonable para la prueba |
+| 6 | Sin rotación de claves | Rotación periódica + versionado (`alg`/`kid` en la respuesta ya deja hueco) | Fuera de alcance temporal |
+| 7 | `env.ts` cae a `''` y falla en runtime | **Fail-fast con Zod al boot** (ver §1) | Diferido; falla-cerrado con 500, no degrada a inseguro |
+| 8 | Sin CORS/helmet/rate-limit | Obligatorios | Diferidos a `welcome_screen`/`deploy` (ver §3-5) |
+| 9 | `GET /crypto/public-key` sin caché/pinning | Cache-control y posible *key pinning* anti-MITM | El MITM real lo cubre TLS; el pinning es defensa en profundidad |
+
+> El punto de fondo (fila 1): en un producto la pregunta honesta es *"¿por qué
+> cifrar a mano si ya hay HTTPS?"*. La respuesta legítima es **E2E/zero-knowledge**
+> o **cifrado en reposo**. Aquí se hace porque el enunciado lo pide como ejercicio,
+> y se implementa correctamente.
+
 ### 3. Cabeceras y CORS · Prioridad ALTA (cors) / MEDIA (helmet)
 
 - **`cors`** — **necesario ya**: el front (`:5173` en dev) llamando al backend
@@ -207,7 +240,7 @@ descifrar/procesar. Evita payloads maliciosos y errores no controlados.
 - [x] Esquema de cifrado decidido: híbrido asimétrico (sin secreto en el front)
 - [x] `VITE_CRYPTO_SECRET` eliminado de `.env.example` y `CLAUDE.md`
 - [ ] Validación fail-fast del entorno (Zod)
-- [ ] Implementar el cifrado híbrido (clave pública en front, privada solo en back)
+- [x] Implementar el cifrado híbrido (clave pública en front, privada solo en back)
 - [ ] `cors` restringido + `helmet`
 - [ ] Rate limiting en escritura
 - [ ] Validación de payload de entrada

@@ -6,7 +6,8 @@ export const env = {
   port: Number(process.env.PORT ?? 3001),
   nodeEnv: process.env.NODE_ENV ?? 'development',
   mongodbUri: process.env.MONGODB_URI ?? '',
-  cryptoSecret: process.env.CRYPTO_SECRET ?? '',
+  /** Clave privada RSA (PEM PKCS#8) del esquema híbrido asimétrico. Solo de entorno, nunca hardcodeada. */
+  cryptoPrivateKey: process.env.CRYPTO_PRIVATE_KEY ?? '',
 } as const;
 
 export const isProd = env.nodeEnv === 'production';
