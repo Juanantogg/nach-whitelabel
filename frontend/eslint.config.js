@@ -33,12 +33,22 @@ export default tseslint.config(
       'no-console': ['warn', { allow: ['warn', 'error', 'info'] }],
     },
   },
-  // En tests: prohíbe `.only` (desactivaría el resto de la suite en CI).
+  // En tests: prohíbe `.only` (desactivaría el resto de la suite en CI). Además
+  // se relajan las reglas `no-unsafe-*` con reconocimiento de tipos: los tests
+  // usan a propósito valores `any` (matchers asimétricos como `expect.any(...)`,
+  // dobles/mocks del borde del sistema), donde exigir tipado estricto no aporta
+  // seguridad al código de producción. La red de tipos real la da `tsc` en el
+  // código de producción, no el lint del test.
   {
     files: ['**/*.{test,spec}.{ts,tsx}'],
     plugins: { vitest },
     rules: {
       'vitest/no-focused-tests': 'error',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
     },
   },
   // Desactiva reglas de estilo que colisionan con Prettier (debe ir al final).

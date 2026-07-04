@@ -69,6 +69,25 @@ export const brandConfigSchema = z
         illustrationAlt: z.string().default('Ilustración de bienvenida'),
       })
       .prefault({}),
+
+    voice: z
+      .object({
+        // Etiqueta accesible del botón de dictado (aria-label / tooltip).
+        startLabel: z.string().default('Dictar mi nombre'),
+        // Etiqueta mientras escucha (para el toggle del botón).
+        listeningLabel: z.string().default('Escuchando…'),
+        // Errores mostrables (la UI decide cuáles enseñar).
+        permissionDenied: z
+          .string()
+          .default('No pudimos usar el micrófono. Revisa los permisos o escribe tu nombre.'),
+        noSpeech: z.string().default('No te escuchamos. Inténtalo de nuevo o escribe tu nombre.'),
+        genericError: z.string().default('Hubo un problema con el dictado. Escribe tu nombre.'),
+        // Texto/aria cuando el navegador no soporta la API.
+        unsupported: z.string().default('El dictado por voz no está disponible en este navegador.'),
+        // Locale BCP-47 del reconocimiento.
+        lang: z.string().default('es-ES'),
+      })
+      .prefault({}),
   })
   .prefault({});
 

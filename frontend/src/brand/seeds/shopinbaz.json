@@ -28,5 +28,14 @@
     "illustration": "/brands/shopinbaz/illustration.svg",
     "logoAlt": "shopinbaz",
     "illustrationAlt": "Ilustración de bienvenida shopinbaz"
+  },
+  "voice": {
+    "startLabel": "Dictar mi nombre",
+    "listeningLabel": "Escuchando…",
+    "permissionDenied": "No pudimos usar el micrófono. Revisa los permisos o escribe tu nombre.",
+    "noSpeech": "No te escuchamos. Inténtalo de nuevo o escribe tu nombre.",
+    "genericError": "Hubo un problema con el dictado. Escribe tu nombre.",
+    "unsupported": "El dictado por voz no está disponible en este navegador.",
+    "lang": "es-ES"
   }
 }
