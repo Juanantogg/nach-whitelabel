@@ -97,7 +97,7 @@
         "Estados de carga y error visibles al usuario",
         "Tests de integración del flujo, incluido el límite/contador (RED antes de implementar)"
       ],
-      "status": "pending",
+      "status": "done",
       "layer": "fullstack",
       "depends_on": [
         "brand_config",
@@ -114,6 +114,7 @@
       "requires_approval": false,
       "decisions": [
         "cors + helmet son necesarios ya (cross-origin front↔back); allowlist de orígenes desde config, nunca '*' en prod. Ver docs/seguridad.md.",
+        "En dev el puente front→back es el proxy de Vite (vite.config.ts server.proxy → :3001, mismo origen, sin CORS). El CORS de esta feature es lo que habilita la conexión cross-origin REAL (prod) y hace innecesario el proxy fuera de dev; deploy fija VITE_API_URL a la URL desplegada.",
         "Manejador de errores centralizado: Express 5 reenvía los rechazos async solo; devuelve JSON de error consistente y NO filtra stack traces en producción.",
         "Graceful shutdown (SIGTERM/SIGINT): dejar de aceptar conexiones, cerrar Mongoose y salir — estándar en contenedores/App Runner.",
         "pino + pino-http como logging estructurado antes de los endpoints reales (hoy console.*).",
@@ -199,6 +200,30 @@
       "status": "pending",
       "layer": "fullstack",
       "depends_on": ["consecutive_counter", "brand_config"]
+    },
+    {
+      "name": "voice_ux",
+      "title": "UX del dictado por voz en la pantalla (toggle + feedback de escucha)",
+      "description": "El hook useVoiceInput (voice_capture) está completo y testeado, pero NameField solo consume start(): ignora status/isListening/stop/errorCode. Resultado observado: al pulsar el micrófono la sesión arranca pero no hay forma de pararla, no hay indicación visual de 'escuchando', y el usuario no percibe la transcripción. Esta feature cablea la UX completa de voz en la pantalla, sin tocar el hook (que ya cumple su acceptance).",
+      "requires_approval": false,
+      "decisions": [
+        "NO reescribir useVoiceInput: su API (status/isListening/errorCode/start/stop) ya es suficiente. El trabajo es de INTEGRACIÓN en NameField/WelcomeScreen.",
+        "Botón de micrófono como TOGGLE: pulsar en idle → start(); pulsar en listening → stop(). El estado lo dicta isListening del hook.",
+        "Feedback visual de 'escuchando' (p.ej. pulso/animación en el botón o etiqueta) usando textos de marca (voice.listeningLabel) — cero literales, respeta prefers-reduced-motion.",
+        "Errores de voz (not-allowed/no-speech/audio-capture/…) mostrados con los textos de marca ya existentes (voice.permissionDenied/noSpeech/genericError/unsupported); si no hay soporte, degradar el botón (oculto o deshabilitado con voice.unsupported).",
+        "Revisar la config del reconocimiento para que la transcripción llegue de verdad: evaluar interimResults para feedback en vivo y/o continuous, sin romper el límite de 15 ni el mapeo de onResult. Si requiere tocar el hook, es cambio mínimo con su propio RED.",
+        "Prioridad media: la captura por voz es requisito del enunciado (voice_capture done cubre el hook), pero la UX pulida va después de que el flujo core (welcome_screen) esté commiteado."
+      ],
+      "acceptance": [
+        "El botón de micrófono alterna start/stop según isListening; en listening, pulsar de nuevo detiene el dictado",
+        "Indicación visual clara de 'escuchando' mientras status==='listening', con texto de marca y respetando prefers-reduced-motion",
+        "La transcripción dictada rellena el campo de nombre (con el tope de 15) y es perceptible para el usuario",
+        "Estados de no-soporte y error de permiso/voz se comunican con los textos de marca; sin literales ni hex en componentes",
+        "Tests de la integración de voz en NameField (toggle, estado de escucha, no-soporte, error) con el hook/API mockeados (RED antes de implementar)"
+      ],
+      "status": "pending",
+      "layer": "frontend",
+      "depends_on": ["welcome_screen", "voice_capture"]
     }
   ]
 }

@@ -3,11 +3,28 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ThemeProvider, resolveBrand, loadBrand, BASE_DOMAIN } from './brand';
+import { env, isDev } from './config/env';
+
+// Resolución de marca fuera del árbol (síncrona en el Provider): el subdominio
+// (prod) o `?brand=` (dev) decide la key; `loadBrand` la trae de S3 y cae al
+// default genérico ante cualquier fallo. Nunca rompe el arranque.
+const brandKey = resolveBrand({
+  hostname: window.location.hostname,
+  search: window.location.search,
+  isDev,
+  baseDomain: BASE_DOMAIN,
+  defaultBrand: env.defaultBrand,
+});
+
+const brand = await loadBrand(brandKey, { isDev });
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <ThemeProvider config={brand}>
+        <App />
+      </ThemeProvider>
     </ErrorBoundary>
   </StrictMode>,
 );

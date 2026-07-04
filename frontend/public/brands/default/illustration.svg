@@ -1,4 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Ilustración de bienvenida">
-  <rect width="240" height="240" rx="24" fill="rgb(38 36 43)" />
-  <circle cx="120" cy="120" r="72" fill="rgb(124 92 252)" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Ilustración de bienvenida: dos personas saludando">
+  <!--
+    Ilustracion GENERICA de bienvenida para la marca `default` (fallback offline).
+    Dos figuras planas saludando, en espiritu de las maquetas pero NEUTRAS: no
+    reproduce la ilustracion propietaria de shopinbaz/elektra. El color de piel,
+    ropa y pelo usa tonos propios; el acento toma la variable de marca
+    brand-primary para armonizar con cualquier marca. Cada marca real sube su
+    propia ilustracion a su bucket (ver docs/decisiones.md ADR 13).
+  -->
+  <defs>
+    <clipPath id="rounded">
+      <rect width="240" height="240" rx="24" />
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#rounded)">
+    <!-- Lienzo (usa el color de superficie de la marca, con fallback). -->
+    <rect width="240" height="240" fill="var(--brand-surface, rgb(38 36 43))" />
+
+    <!-- Suelo/sombra suave bajo las figuras. -->
+    <ellipse cx="120" cy="196" rx="78" ry="12" fill="rgb(0 0 0 / 0.18)" />
+
+    <!-- ===== Figura izquierda: signo de paz ===== -->
+    <g>
+      <!-- Piernas -->
+      <rect x="98" y="150" width="14" height="42" rx="6" fill="rgb(72 68 82)" />
+      <rect x="114" y="150" width="14" height="42" rx="6" fill="rgb(72 68 82)" />
+      <!-- Torso -->
+      <path d="M96 108 q17 -14 34 0 l4 44 q-21 8 -42 0 Z" fill="var(--brand-primary, rgb(124 92 252))" />
+      <!-- Brazo levantado (signo de paz) -->
+      <rect x="90" y="86" width="11" height="34" rx="5" fill="rgb(226 205 190)" transform="rotate(18 95 103)" />
+      <!-- Mano -->
+      <circle cx="86" cy="82" r="7" fill="rgb(238 216 200)" />
+      <!-- Brazo bajo -->
+      <rect x="124" y="112" width="11" height="30" rx="5" fill="rgb(226 205 190)" transform="rotate(-10 129 127)" />
+      <!-- Cabeza -->
+      <circle cx="113" cy="88" r="18" fill="rgb(238 216 200)" />
+      <!-- Pelo -->
+      <path d="M95 86 a18 18 0 0 1 36 0 q-6 -6 -18 -6 q-12 0 -18 6 Z" fill="rgb(58 44 40)" />
+      <path d="M96 86 q-4 18 2 30 q-10 -12 -2 -30 Z" fill="rgb(58 44 40)" />
+    </g>
+
+    <!-- ===== Figura derecha: saludando con la mano ===== -->
+    <g>
+      <!-- Piernas -->
+      <rect x="128" y="150" width="14" height="42" rx="6" fill="rgb(96 66 44)" />
+      <rect x="144" y="150" width="14" height="42" rx="6" fill="rgb(96 66 44)" />
+      <!-- Torso -->
+      <path d="M124 108 q19 -14 38 0 l4 44 q-23 8 -46 0 Z" fill="rgb(70 108 150)" />
+      <!-- Brazo saludando (arriba) -->
+      <rect x="160" y="80" width="11" height="36" rx="5" fill="rgb(224 178 150)" transform="rotate(24 165 98)" />
+      <!-- Mano saludando -->
+      <circle cx="176" cy="74" r="8" fill="rgb(236 194 166)" />
+      <!-- Brazo bajo -->
+      <rect x="120" y="112" width="11" height="30" rx="5" fill="rgb(224 178 150)" transform="rotate(8 125 127)" />
+      <!-- Cabeza -->
+      <circle cx="145" cy="88" r="18" fill="rgb(236 194 166)" />
+      <!-- Pelo corto -->
+      <path d="M127 84 a18 18 0 0 1 36 0 q0 -12 -18 -12 q-18 0 -18 12 Z" fill="rgb(46 36 32)" />
+    </g>
+  </g>
 </svg>

@@ -38,6 +38,14 @@ export const brandConfigSchema = z
         inputPlaceholder: z.string().default('Escribe tu nombre'),
         submitLabel: z.string().default('Comenzar'),
         counterTemplate: z.string().default('{count}/{max} caracteres'),
+        // Textos del flujo de welcome_screen que las maquetas no muestran
+        // (solo capturan el estado inicial). Con `.default()` por campo se
+        // mantiene el principio "marca nueva = un JSON" sin tocar componentes.
+        resultLabel: z.string().default('Tu número de registro es:'),
+        loadingLabel: z.string().default('Procesando…'),
+        errorGeneric: z.string().default('No pudimos procesarlo. Inténtalo de nuevo.'),
+        errorNetwork: z.string().default('Sin conexión. Revisa tu internet e inténtalo.'),
+        retryLabel: z.string().default('Reintentar'),
       })
       .prefault({}),
 

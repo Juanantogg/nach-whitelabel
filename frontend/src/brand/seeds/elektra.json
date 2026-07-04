@@ -24,8 +24,8 @@
     "buttonVariant": "soft"
   },
   "assets": {
-    "logo": "/brands/elektra/logo.svg",
-    "illustration": "/brands/elektra/illustration.svg",
+    "logo": "https://brands.garcia3apps.com/elektra/logo.svg",
+    "illustration": "https://brands.garcia3apps.com/elektra/illustration.svg",
     "logoAlt": "elektra",
     "illustrationAlt": "Ilustración de bienvenida Elektra"
   },

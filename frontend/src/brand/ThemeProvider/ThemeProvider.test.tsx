@@ -85,7 +85,10 @@ describe('ThemeProvider + useBrand — render multi-marca (config por prop)', ()
     expect(
       screen.getByRole('heading', { name: '¡Te damos la bienvenida a shopinbaz!' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('img')).toHaveAttribute('src', '/brands/shopinbaz/illustration.svg');
+    // Ilustración PROPIA de shopinbaz (URL del bucket, ADR 13). Se deriva de la
+    // seed para no volver a desincronizarse; debe ser distinta a la de elektra.
+    expect(screen.getByRole('img')).toHaveAttribute('src', shopinbazConfig.assets.illustration);
+    expect(shopinbazConfig.assets.illustration).not.toBe(elektraConfig.assets.illustration);
     expect(readVar('--brand-primary')).toBe('170 59 255');
   });
 
@@ -99,7 +102,10 @@ describe('ThemeProvider + useBrand — render multi-marca (config por prop)', ()
     expect(
       screen.getByRole('heading', { name: '¡Te damos la bienvenida a Préstamo Elektra!' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('img')).toHaveAttribute('src', '/brands/elektra/illustration.svg');
+    // Ilustración PROPIA de elektra (URL del bucket, ADR 13). Se deriva de la
+    // seed para no volver a desincronizarse; debe ser distinta a la de shopinbaz.
+    expect(screen.getByRole('img')).toHaveAttribute('src', elektraConfig.assets.illustration);
+    expect(elektraConfig.assets.illustration).not.toBe(shopinbazConfig.assets.illustration);
     expect(readVar('--brand-primary')).toBe('242 74 45');
   });
 

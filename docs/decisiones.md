@@ -193,3 +193,59 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
   connection string), se **rota** en Atlas (Database Access → Edit Password) y se
   actualiza el `.env` local; el cluster de prod no se ve afectado por ser
   independiente.
+
+## 12. Identidad de marca abierta (S3 manda) y carga por entorno
+
+- **Contexto (2026-07-03):** el diseño inicial de `brand_config` fijaba
+  `brandKeySchema = z.enum(['shopinbaz','elektra'])` y dos marcas bundleadas como
+  catálogo cerrado. Eso contradice el modelo real "añadir una marca = subir un JSON
+  a S3, sin tocar código": el enum obligaba a editar código por cada marca.
+- **Decisión:** la identidad de marca es **abierta**. `BrandKey = string` (sin enum).
+  En producción manda el bucket S3: el subdominio se usa tal cual para pedir
+  `<key>.json`; la red de seguridad es el `brandConfigSchema` (Zod con `.default()`
+  por campo), no una lista hardcodeada. El único bundle de runtime es un
+  **`default.json` genérico** como fallback offline. `shopinbaz.json`/`elektra.json`
+  pasan a ser **seeds** en el repo (para subir a S3 y como fixtures del test
+  multi-marca), NO catálogo importado en runtime.
+- **Consecuencia:** el `ThemeProvider` recibe una `BrandConfig` **ya resuelta** por
+  prop (síncrono, testeable); `resolveBrand` + `loadBrand` corren fuera (main.tsx).
+- **Por qué:** cumple el principio de arquitectura escalable del enunciado (marca
+  nueva = un JSON, cero código) y elimina la doble fuente de verdad (enum vs bucket).
+  Refina la ADR 5 (selección por entorno) con la key abierta.
+
+### 12.a — `loadBrand`: cadena de fallback por entorno (2026-07-04)
+
+- **Contexto:** durante `welcome_screen` se detectó que en desarrollo `loadBrand`
+  devolvía SIEMPRE el `default.json` (guarda `if (isDev) return DEFAULT_BRAND`), así
+  que `?brand=elektra` resolvía la key pero nunca se veía elektra/shopinbaz en el
+  navegador. Las seeds solo servían como fixtures de test.
+- **Decisión:** `loadBrand` unifica una cadena de fallback por entorno:
+  - **Dev:** intenta `fetch` de S3 por key → si falla (red/CORS/404/Zod), busca una
+    **seed bundleada** por key (`seeds/<key>.json`) → si tampoco existe, `default`.
+  - **Prod:** intenta S3 por key → si falla, `default` (las seeds NO entran).
+  Las seeds se importan **solo en dev** (tras `import.meta.env.DEV`), de modo que el
+  tree-shaking las excluye del bundle de producción.
+- **Por qué:** permite previsualizar cada marca en dev (`?brand=elektra`) sin
+  desplegar, mantiene "dev intenta S3 primero" (más fiel a prod) y no contamina el
+  bundle de producción con las seeds.
+
+## 13. Assets de marca en el bucket, NO en el build
+
+- **Contexto (2026-07-04):** las seeds `elektra.json`/`shopinbaz.json` apuntaban a
+  rutas locales `/brands/<key>/logo.svg` inexistentes en `public/`. Se planteó
+  enlazar al CDN real de Elektra (`dh3yyy4wyj8lf.cloudfront.net`).
+- **Decisión:** siendo white-label de verdad, los assets de una marca viven en el
+  **mismo bucket S3/CloudFront que su `<key>.json`**, NO bundleados. Convención:
+  `https://brands.garcia3apps.com/<key>/<asset>`. Las seeds del repo solo apuntan a
+  esas URLs absolutas; subir los SVG al bucket es parte de `deploy`.
+- **Excepción — `default.json`:** es el fallback OFFLINE, así que es la ÚNICA marca
+  cuyos assets SÍ van bundleados en `public/brands/default/`.
+- **Consecuencia:** `assets.logo`/`illustration` en el schema son `z.string()` sin
+  validación de formato (aceptan URL absoluta o ruta local). En `deploy`/
+  `backend_hardening` la CSP (`img-src`) debe allowlistar `brands.garcia3apps.com`.
+- **Por qué:** coherente con "marca nueva = un JSON (+ sus assets) en S3, cero código
+  y cero rebuild". Evita meter binarios de marca en el bundle (misma doble fuente de
+  verdad que ya se eliminó para el JSON) y no depende de CDNs ajenos.
+- **Descartado:** enlazar al CDN de Elektra (infra de terceros: hotlinking 403, CSP,
+  cambios de ruta fuera de control, propiedad del asset); bundlear los SVG de marca
+  en `public/` (los mete en el build, rompe el principio white-label).

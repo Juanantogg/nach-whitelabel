@@ -84,6 +84,49 @@ describe('brandConfigSchema / parseBrandConfig', () => {
 });
 
 /**
+ * Contrato de marca de welcome_screen (design.md → decisión aprobada #1).
+ *
+ * La pantalla de bienvenida necesita textos que las maquetas NO muestran (solo
+ * capturan el estado inicial): la etiqueta del resultado, el label del botón en
+ * carga, los dos mensajes de error (genérico y de red) y el label de reintento.
+ * Se añaden al bloque `text` con `.default()` por campo, para no romper el
+ * principio "marca nueva = un JSON" ni tocar componentes.
+ *
+ * RED: falla hasta que el implementer de brand añada esos cinco campos al
+ * `brandConfigSchema`. Aquí se prueba el MECANISMO (existencia + relleno por
+ * defaults + preservación de un parcial), no el copy exacto: la fuente de verdad
+ * del default es `parseBrandConfig({}).text`.
+ */
+describe('brandConfigSchema — textos de flujo de welcome_screen (decisión #1)', () => {
+  it('un JSON sin esos textos produce una BrandConfig con los cinco campos completos y usables', () => {
+    const config = parseBrandConfig({});
+
+    // Los cinco campos existen y traen un default no vacío → marca usable sin declararlos.
+    expect(config.text.resultLabel.length).toBeGreaterThan(0);
+    expect(config.text.loadingLabel.length).toBeGreaterThan(0);
+    expect(config.text.errorGeneric.length).toBeGreaterThan(0);
+    expect(config.text.errorNetwork.length).toBeGreaterThan(0);
+    expect(config.text.retryLabel.length).toBeGreaterThan(0);
+  });
+
+  it('conserva valores parciales de esos textos y rellena el resto con los defaults del schema', () => {
+    const defaults = parseBrandConfig({});
+    const config = parseBrandConfig({ text: { retryLabel: 'Volver a intentar' } });
+
+    // El valor provisto se respeta.
+    expect(config.text.retryLabel).toBe('Volver a intentar');
+    // Los sub-campos no provistos igualan el default del schema (no un literal).
+    expect(config.text.resultLabel).toBe(defaults.text.resultLabel);
+    expect(config.text.loadingLabel).toBe(defaults.text.loadingLabel);
+    expect(config.text.errorGeneric).toBe(defaults.text.errorGeneric);
+    expect(config.text.errorNetwork).toBe(defaults.text.errorNetwork);
+    // El resto de campos previos de text quedan intactos → marca usable.
+    expect(config.text.title).toBe(defaults.text.title);
+    expect(config.text.submitLabel).toBe(defaults.text.submitLabel);
+  });
+});
+
+/**
  * Contrato de marca de voice_capture (design.md → acceptance #12).
  *
  * El schema Zod debe tener un bloque `voice` con `.default()` por campo (y

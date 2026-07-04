@@ -24,8 +24,8 @@
     "buttonVariant": "soft"
   },
   "assets": {
-    "logo": "/brands/shopinbaz/logo.svg",
-    "illustration": "/brands/shopinbaz/illustration.svg",
+    "logo": "https://brands.garcia3apps.com/shopinbaz/logo.svg",
+    "illustration": "https://brands.garcia3apps.com/shopinbaz/illustration.svg",
     "logoAlt": "shopinbaz",
     "illustrationAlt": "Ilustración de bienvenida shopinbaz"
   },
