@@ -30,3 +30,9 @@ coverage/
 
 # Misc
 .cache/
+
+# Harness — índice de sesión efímero (la evidencia por feature SÍ se commitea)
+progress/current.md
+
+# Claude Code — settings locales del usuario (los del proyecto SÍ se versionan)
+.claude/settings.local.json

@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"$CLAUDE_TOOL_INPUT\" | grep -qE '\"file_path\"[^,]*\\.env(\"|[^.])' && echo 'BLOQUEADO: no se editan archivos .env desde un agente. Las claves viven fuera del repo; documenta en .env.example.' && exit 1 || exit 0",
+            "description": "Impide que un agente escriba archivos .env (claves de cifrado / credenciales de Mongo nunca en el repo)."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/garcia3/workspace/pruebas-tecnicas/natch && pnpm lint 2>&1 | tail -8 && pnpm typecheck 2>&1 | tail -8",
+            "description": "Tras editar archivos, corre lint + typecheck en ambos paquetes y muestra el resumen."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/garcia3/workspace/pruebas-tecnicas/natch && ./init.sh full 2>&1 | tail -20 && echo '[harness] init.sh full OK' || (echo '[harness] init.sh full FALLÓ — revisa antes de cerrar' && exit 1)",
+            "description": "Antes de cerrar sesión, ejecuta verificación completa (deps + lint + typecheck + test + build)."
+          }
+        ]
+      }
+    ]
+  }
+}

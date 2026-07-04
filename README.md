@@ -60,27 +60,38 @@ nach-whitelabel/
 
 ## Decisiones de diseño
 
+> 📋 El registro completo de decisiones (contexto, porqué y alternativas
+> descartadas) está en **[`docs/decisiones.md`](docs/decisiones.md)**. Resumen:
+
 - **Monorepo (pnpm workspaces).** Front y back comparten el contrato de cifrado y
-  la API; un único repo se clona y evalúa de una sola vez, con historia de
-  commits unificada.
+  la API; un único repo se clona y evalúa de una vez, con historia unificada.
 - **White-label vía tokens de tema.** Los componentes usan clases Tailwind que
-  apuntan a **CSS variables** (`--brand-*`). Cada marca define sus valores y un
-  `ThemeProvider` los inyecta en runtime → cambiar de marca **no toca la lógica
-  de ningún componente**. Textos y assets también vienen de la config de marca.
+  apuntan a **CSS variables** (`--brand-*`); un `ThemeProvider` las inyecta en
+  runtime. Textos, colores, estilos e ilustración vienen de la config de marca →
+  cambiar de marca **no toca la lógica de ningún componente**.
+- **Config de marca en JSON, validada con Zod.** En producción el front la carga
+  desde **S3** con fallback a una marca bundleada; Zod valida y rellena defaults,
+  así un JSON incompleto o un fetch fallido nunca rompen la app. Sin dashboard ni
+  backend de config.
+- **Marca activa según el entorno.** En **producción** la fija el **subdominio**
+  (`elektra.dominio` → su JSON en S3). En **desarrollo** se usa `?brand=elektra`
+  (solo dev) o, si no, `VITE_DEFAULT_BRAND`. Sin switcher: el enunciado no lo pide.
+- **Cifrado híbrido asimétrico** (decisión propia sobre el "encriptar" que pide el
+  enunciado): clave privada en el servidor, pública en el front, Web Crypto API.
+  Ningún secreto en el bundle. Detalle en [`docs/seguridad.md`](docs/seguridad.md).
 - **Backend en capas** (`routes → controllers → services`) con `app` separada de
-  `server`, lo que permite testear endpoints con Supertest sin abrir puerto ni
-  depender de MongoDB.
-- **Calidad automatizada.** Conventional Commits (commitlint), Prettier + ESLint
-  en cada commit vía Husky + lint-staged, y CI que corre lint, typecheck, test y
-  build en cada push/PR.
+  `server` → endpoints testeables con Supertest sin abrir puerto ni depender de Mongo.
+- **TDD estricto** (RED → GREEN → REFACTOR) y **calidad automatizada**: Conventional
+  Commits (commitlint), Prettier + ESLint vía Husky + lint-staged, y CI que corre
+  lint, typecheck, test y build en cada push/PR.
 
 ## Convención de commits
 
 [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`,
 `docs:`, `chore:`, `refactor:`, `test:`, `ci:`… Validado automáticamente.
 
----
+## Estado del proyecto
 
-> Estado actual: **dev harness (Fase 0) completo**. La implementación de la
-> funcionalidad (captura por voz, cifrado, contador consecutivo y theming por
-> marca) es la siguiente fase.
+El backlog y el estado de cada feature (`pending` / `in_progress` / `done` /
+`blocked`) se llevan en **[`feature_list.json`](feature_list.json)**; el progreso
+de la sesión activa y la evidencia por feature, en **[`progress/`](progress/)**.

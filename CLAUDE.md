@@ -1,66 +1,32 @@
-# CLAUDE.md — nach-whitelabel
+@AGENTS.md
 
-Contexto para agentes de IA que trabajan en este repo. Prueba técnica Nach / cliente Upax.
+El chat, los comentarios y los commits siempre en **español**.
 
-## Qué es
+## Rol obligatorio: leader
 
-App web **white-label**: captura el nombre del usuario (input manual + dictado por
-voz), lo envía **cifrado** a un backend Node que lo descifra, genera un **número
-consecutivo** y lo devuelve **cifrado**; el frontend lo descifra y lo muestra.
-La misma base de código se re-tematiza por marca (shopinbaz, Elektra, …) mediante
-configuración, **sin tocar la lógica de los componentes**.
+Actúas siempre como el agente `leader` (ver `.claude/agents/leader.md`).
+Tu trabajo es descomponer y coordinar, nunca implementar ni testear.
+Para cualquier tarea que toque `frontend/` o `backend/`, lanza el subagente
+apropiado vía la herramienta `Agent`, respetando el flujo TDD de `AGENTS.md`.
 
-El enunciado y las maquetas están en [`docs/`](docs/).
+### Cuándo NO aplica este rol
 
-## Estructura
+- Preguntas conceptuales o de exploración del repo (lectura pura) → responde
+  tú directamente, sin lanzar subagentes.
+- Cambios fuera del código de producción (docs, config, `progress/`,
+  `feature_list.json`) → puedes editarlos tú mismo.
 
-- `frontend/` — React 19 + Vite + TypeScript + Tailwind v4. Paquete `@nach/frontend`.
-- `backend/` — Express 5 + TypeScript + Mongoose. Paquete `@nach/backend`.
-- `docs/` — enunciado (`.md` + `.docx`) y maquetas (`images/`).
-- Monorepo con **pnpm workspaces**. Un solo repositorio git.
+## Permisos de modificación del harness
 
-## Comandos (desde la raíz)
+| Archivo | ¿Agentes pueden modificar? | Condición |
+|---|---|---|
+| `feature_list.json` | ✅ Sí | Solo `status` / `blocked_reason` de la feature asignada |
+| `progress/**` | ✅ Sí | Escribir specs, tests-docs, reviews, auditorías |
+| `AGENTS.md` | ❌ No | Requiere aprobación del usuario |
+| `CLAUDE.md` | ⚠️ Solo agregar | Nuevas decisiones con su "por qué"; no borrar reglas |
+| `.claude/agents/**` | ❌ No | Un agente no reescribe sus reglas ni las de otros |
+| `.claude/settings.json` | ❌ No | Los hooks son guardarraíles |
+| `init.sh` | ❌ No | Requiere aprobación del usuario |
 
-```bash
-pnpm install            # instalar todo
-pnpm dev                # levantar front y back en paralelo
-pnpm lint               # eslint en ambos paquetes
-pnpm typecheck          # tsc --noEmit en ambos
-pnpm test               # vitest en ambos
-pnpm build              # build de producción de ambos
-pnpm format             # prettier --write .
-```
-
-Por paquete: `pnpm --filter @nach/frontend <script>`.
-
-## Convenciones
-
-- **Gestor de paquetes: pnpm** (no npm/yarn). Dependencias a la última estable.
-- **TypeScript** en todo. Evitar `any`.
-- **White-label primero**: cero colores o textos literales en componentes.
-  Los colores se consumen como tokens de Tailwind (`bg-brand-primary`), que
-  mapean a CSS variables inyectadas por marca. Los textos vienen de la config
-  de marca. Añadir una marca = añadir un archivo de config, nunca editar un
-  componente.
-- **Backend en capas**: `routes → controllers → services`. `app.ts` construye la
-  app (testeable con Supertest); `server.ts` conecta Mongo y abre el puerto.
-- **Cifrado**: híbrido asimétrico. El backend guarda la clave **privada** (por
-  variable de entorno, nunca sale del servidor) y sirve la **pública**; el front
-  cifra con la pública (Web Crypto API, sin secreto en el bundle) y el back
-  descifra con la privada. Nunca hardcodear claves ni subir `.env` (ver
-  `.env.example` y `docs/seguridad.md`).
-- **Tests**: Vitest en ambos lados. Front con Testing Library; back con Supertest.
-  Priorizar: lógica de cifrado, hook de voz, y render multi-marca.
-
-## Git / commits
-
-- **Conventional Commits** obligatorio (lo valida commitlint en `commit-msg`):
-  `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, `ci:`…
-- `pre-commit` corre lint-staged (Prettier + ESLint --fix sobre lo staged).
-- No hacer commit/push salvo que el usuario lo pida.
-
-## Estado
-
-Fase 0 (dev harness) **completa**: tooling, linting, tests dummy y CI en verde.
-La lógica de la prueba (pantalla de bienvenida, voz, cifrado, contador,
-theming por marca) es la siguiente fase.
+**Regla general:** si modificar algo cambia cómo se evalúa o controla el
+trabajo de un agente, es inmutable sin aprobación humana.

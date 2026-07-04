@@ -1,0 +1,150 @@
+{
+  "project": "nach-whitelabel",
+  "description": "App white-label: captura de nombre (input + voz), cifrado híbrido asimétrico front↔back y número consecutivo. Monorepo pnpm (React 19 + Vite / Express 5 + Mongoose). Prueba técnica Nach / Upax.",
+  "rules": {
+    "methodology": "TDD estricto: el tester escribe tests que fallan (RED) derivados de acceptance; el implementer escribe el mínimo código para pasarlos (GREEN); el reviewer valida y limpia (REFACTOR).",
+    "one_feature_at_a_time": true,
+    "require_review_to_close": true,
+    "security_audit_on": ["cifrado", "manejo de claves", ".env", "datos del usuario"],
+    "valid_status": ["pending", "in_progress", "done", "blocked"],
+    "depends_on": "Cada feature lista las features que deben estar 'done' antes de empezarla (grafo de dependencias explícito). El leader respeta este orden; una feature con dependencias pendientes no se arranca."
+  },
+  "features": [
+    {
+      "name": "brand_config",
+      "title": "Sistema de configuración white-label por marca",
+      "description": "Definir la forma de la config de marca y el mecanismo que la inyecta sin tocar componentes. El enunciado exige cambiar dinámicamente TEXTOS, COLORES y ESTILOS VISUALES por configuración (JSON/env/props), sin modificar la lógica de los componentes. Base de todo el theming.",
+      "requires_approval": true,
+      "decisions": [
+        "Sin dashboard ni backend de config: la config de marca es un JSON. En producción el front lo hace fetch desde S3; en dev/tests usa marca(s) bundleada(s) en el repo (sin depender de red).",
+        "El front VALIDA el JSON con un schema Zod. Campos ausentes se rellenan campo a campo con .default() (JSON parcial → marca usable). Si el fetch falla (404/CORS/red) → marca por defecto bundleada. La app nunca se rompe por config.",
+        "Selección de marca POR ENTORNO (sin switcher): en PRODUCCIÓN manda solo el SUBDOMINIO (elektra.dominio → decide qué JSON pedir en S3). En DESARROLLO/tests: ?brand= (solo dev) > VITE_DEFAULT_BRAND; último fallback, la primera marca. El subdominio no se lee en dev; ?brand= no se lee en prod.",
+        "Aplicación al DOM: un ThemeProvider inyecta las CSS variables --brand-* en :root según la marca activa; Tailwind las consume vía tokens (bg-brand-primary…). Cambiar de marca re-setea las variables, sin recargar.",
+        "REPARTO: esta feature implementa la LÓGICA (fetch S3 + Zod + fallback + detección de subdominio), testeada con S3 y hostname MOCKEADOS → cero infra. Que el bucket S3 y los subdominios (elektra./shopinbaz.garcia3apps.com) existan de verdad es de la feature 'deploy'.",
+        "Bucket S3 de LECTURA pública (o vía CloudFront) con CORS; el front no lleva credenciales AWS. La config de marca no contiene secretos.",
+        "Para la prueba se da fe de que el JSON subido a S3 es correcto (no hay UI que lo genere); el schema Zod es igualmente la red contra un JSON malformado."
+      ],
+      "acceptance": [
+        "Existe un schema Zod (brandConfigSchema) con .default() por campo; valida textos, colores, estilos visuales e ilustración/logo",
+        "El front carga la marca: en prod fetch desde S3 por subdominio, con fallback a marca bundleada si falla; en tests, mockeado",
+        "JSON parcial → Zod rellena con defaults y la marca es usable; fetch fallido → marca por defecto bundleada (app no se rompe)",
+        "Selección por entorno: subdominio en prod; en dev/tests ?brand= (solo dev) > VITE_DEFAULT_BRAND > primera marca; verificada en tests con hostname/env/URL simulados",
+        "Al menos 2 marcas de ejemplo (shopinbaz morado, elektra rojo/naranja — ver docs/images), bundleadas como fallback",
+        "ThemeProvider inyecta las CSS variables --brand-* en :root; los colores se consumen vía tokens Tailwind, cero hex en componentes",
+        "Textos, estilos visuales e ilustración vienen de la config de marca; cero literales en componentes",
+        "Cambiar de marca no requiere editar ningún componente",
+        "Test de render multi-marca: el mismo componente renderiza shopinbaz y elektra con textos, colores e ilustración distintos"
+      ],
+      "status": "pending",
+      "layer": "frontend",
+      "depends_on": []
+    },
+    {
+      "name": "crypto_hybrid",
+      "title": "Cifrado del nombre y del número (front↔back)",
+      "description": "REQUISITO (enunciado): el nombre viaja encriptado al back, que lo desencripta; el número consecutivo vuelve encriptado y el front lo desencripta. DECISIÓN PROPIA (no exigida por el enunciado): implementarlo como cifrado híbrido asimétrico — back guarda la privada (env) y sirve la pública; el front cifra con la pública (Web Crypto API). Justificación en docs/seguridad.md.",
+      "requires_approval": true,
+      "acceptance": [
+        "REQUISITO: un nombre encriptado en el front se descifra correctamente en el back (round-trip de ida)",
+        "REQUISITO: el número consecutivo vuelve encriptado y el front lo descifra y lo muestra (round-trip de vuelta)",
+        "DECISIÓN: el front nunca contiene la clave privada ni un secreto simétrico en el bundle",
+        "DECISIÓN: el backend expone la clave pública y descifra con la privada (leída de env, nunca hardcodeada)",
+        "Tests de la lógica de cifrado en ambos lados (RED antes de implementar)"
+      ],
+      "status": "pending",
+      "layer": "fullstack",
+      "depends_on": []
+    },
+    {
+      "name": "consecutive_counter",
+      "title": "Generación de número consecutivo",
+      "description": "El backend, tras descifrar el nombre, genera un número consecutivo (persistido en Mongo con Mongoose), lo asocia y lo devuelve cifrado. Capas routes → controllers → services. Se implementa DESPUÉS de crypto_hybrid: así el consecutivo ya tiene con qué cifrarse en su round-trip de vuelta, sin necesidad de mockear el cifrado.",
+      "acceptance": [
+        "Cada petición válida obtiene el siguiente consecutivo, sin colisiones ni huecos por diseño razonable",
+        "Persistencia en Mongo vía Mongoose; el consecutivo sobrevive reinicios",
+        "Lógica en la capa de services, testeable con Supertest sobre app.ts",
+        "Tests de la secuencia (RED antes de implementar)"
+      ],
+      "status": "pending",
+      "layer": "backend",
+      "depends_on": ["crypto_hybrid"]
+    },
+    {
+      "name": "voice_capture",
+      "title": "Captura de nombre por dictado de voz",
+      "description": "Hook de voz (SpeechRecognition API) que transcribe el dictado al mismo campo de nombre que la entrada manual. Manejo de permisos, no-soporte y errores.",
+      "acceptance": [
+        "Un hook (p.ej. useVoiceInput) encapsula la SpeechRecognition API y expone estado (idle/listening/error) y transcripción",
+        "El texto dictado rellena el mismo estado que el input manual",
+        "Degradación elegante si el navegador no soporta la API o se deniega el permiso",
+        "Tests del hook con la API mockeada (RED antes de implementar)"
+      ],
+      "status": "pending",
+      "layer": "frontend",
+      "depends_on": []
+    },
+    {
+      "name": "welcome_screen",
+      "title": "Pantalla de bienvenida y flujo completo",
+      "description": "UI de captura (input + botón de voz) que cifra, envía, recibe el consecutivo cifrado, lo descifra y lo muestra. Integra brand_config, crypto_hybrid, voice_capture y el contador. Sigue las maquetas de docs/images.",
+      "requires_approval": true,
+      "acceptance": [
+        "La pantalla sigue las maquetas de docs/images (título, subtítulo, pregunta, input, botón 'Comenzar') y usa solo tokens/textos de marca (cero literales)",
+        "El input limita a 15 caracteres y muestra el contador '0/15 caracteres' como en las maquetas",
+        "El flujo end-to-end funciona: nombre → cifrado → back → consecutivo cifrado → descifrado → mostrado",
+        "Estados de carga y error visibles al usuario",
+        "Tests de integración del flujo, incluido el límite/contador (RED antes de implementar)"
+      ],
+      "status": "pending",
+      "layer": "fullstack",
+      "depends_on": ["brand_config", "crypto_hybrid", "consecutive_counter", "voice_capture"]
+    },
+    {
+      "name": "deploy",
+      "title": "Deploy a un entorno accesible (AWS, subdominio por marca)",
+      "description": "Punto adicional del enunciado: subir la app a un entorno accesible. Objetivo: subdominios nombrados por marca (elektra.garcia3apps.com, shopinbaz.garcia3apps.com) sirviendo la misma app con marca distinta. Incluye la INFRA que brand_config asume mockeada: bucket S3 con los JSON de marca, front en S3+CloudFront, y el backend Express en App Runner.",
+      "requires_approval": false,
+      "decisions": [
+        "Dominio: garcia3apps.com (propio, ya en producción con la web principal). Los subdominios de marca son registros NOMBRADOS y explícitos (elektra., shopinbaz.), NUNCA un wildcard *.garcia3apps.com, para no interferir con el apex ni con otros usos del dominio.",
+        "Certificado ACM con SAN por subdominio (elektra.garcia3apps.com, shopinbaz.garcia3apps.com), no wildcard. En us-east-1 (requisito de CloudFront).",
+        "Front: S3 (estático) + CloudFront, un comportamiento por subdominio; cada subdominio carga su JSON de marca desde S3. Coste ~0 (free tier).",
+        "Backend: Express en AWS App Runner (corre el Express tal cual, sin adaptador serverless). ⚠️ NO es free tier (~$5-25/mes): APAGAR o eliminar el servicio tras la evaluación. Único gasto recurrente del montaje.",
+        "Base de datos: MongoDB Atlas M0 (gratis). El consecutivo persiste ahí.",
+        "El bucket de los JSON de marca es de lectura pública (o vía CloudFront) con CORS habilitado para los subdominios; sin credenciales AWS en el front.",
+        "Riesgo a vigilar: HTTPS + CORS front↔back impecables (el evaluador abre DevTools). Cero mixed-content ni errores de CORS.",
+        "Plan B si el tiempo aprieta: URL por defecto de CloudFront + selección por ?brand= (sin tocar DNS). brand_config funciona igual por su fallback."
+      ],
+      "acceptance": [
+        "elektra.garcia3apps.com y shopinbaz.garcia3apps.com sirven la app con su marca (o el plan B ?brand= documentado)",
+        "El apex garcia3apps.com y la web principal existente NO se ven afectados por los nuevos registros DNS",
+        "Backend Express desplegado en App Runner y accesible por HTTPS; sin errores de CORS ni mixed-content en la consola del navegador",
+        "MongoDB Atlas conectado; el consecutivo persiste en el entorno desplegado",
+        "Los JSON de marca viven en S3 y el front los carga por subdominio",
+        "Variables de entorno (incl. clave privada de cifrado) configuradas en App Runner, nunca en el repo",
+        "README documenta URLs, layout de S3, el cableado en AWS (Route 53 registros nombrados + CloudFront + ACM SAN + App Runner) y el recordatorio de apagar App Runner"
+      ],
+      "status": "pending",
+      "layer": "fullstack",
+      "depends_on": ["welcome_screen"]
+    },
+    {
+      "name": "records_list",
+      "title": "Listado de registros generados (extra)",
+      "description": "EXTRA fuera del enunciado, a implementar SOLO después del core. Pantalla que lista los registros creados (nombre + número consecutivo) leídos de Mongo. No es un sistema de usuarios/cuentas: es la evidencia visible de la persistencia del contador. Va de la mano de consecutive_counter.",
+      "requires_approval": false,
+      "decisions": [
+        "Terminología: 'registros generados' (nombre + nº consecutivo), NO 'usuarios' — en esta prueba no hay cuentas ni login.",
+        "Prioridad baja: solo se implementa si el core (brand_config, crypto_hybrid, consecutive_counter, voice_capture, welcome_screen) está impecable y sobra tiempo."
+      ],
+      "acceptance": [
+        "Una pantalla lista los registros (nombre + número consecutivo) desde Mongo",
+        "Usa solo tokens/textos de marca (cero literales), como el resto del white-label",
+        "El nombre mostrado respeta la privacidad acordada en docs/seguridad.md (no exponer datos sensibles de más)",
+        "Tests del render del listado (RED antes de implementar)"
+      ],
+      "status": "pending",
+      "layer": "fullstack",
+      "depends_on": ["consecutive_counter", "brand_config"]
+    }
+  ]
+}
