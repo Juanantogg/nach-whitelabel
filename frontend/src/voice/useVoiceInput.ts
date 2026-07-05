@@ -25,6 +25,12 @@ export interface UseVoiceInputResult {
   isListening: boolean;
   errorCode: VoiceErrorCode | null;
   transcript: string;
+  /**
+   * Latch de sesión: pasa a `true` (y ya no vuelve a `false`) al primer error
+   * 'network' — servicio de reconocimiento bloqueado (p.ej. Brave). La UI oculta
+   * el micrófono cuando es `true`. No se persiste entre recargas.
+   */
+  voiceUnavailable: boolean;
   start: () => void;
   stop: () => void;
 }
@@ -66,8 +72,13 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   );
   const [errorCode, setErrorCode] = useState<VoiceErrorCode | null>(null);
   const [transcript, setTranscript] = useState('');
+  const [voiceUnavailable, setVoiceUnavailable] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  // Marca de sesión: ¿esta sesión emitió alguna transcripción útil? Distingue el
+  // cierre normal (idle) de una sesión que arrancó y cerró sin captar nada
+  // (no-speech sintético). Se resetea al arrancar cada sesión.
+  const hadResultRef = useRef(false);
 
   // Refs para leer los valores frescos desde los handlers de la API sin
   // recrear la instancia (los handlers se asignan una vez por sesión). Se
@@ -96,25 +107,47 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
 
     const recognition = new Ctor();
     recognition.lang = langRef.current;
-    recognition.interimResults = false;
+    // interimResults:true → transcripción parcial en vivo (feedback mientras se
+    // habla, menos "varios intentos"). continuous:false: una frase, la API cierra
+    // sola al detectar el fin del habla.
+    recognition.interimResults = true;
     recognition.continuous = false;
     recognition.maxAlternatives = 1;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      const result = event.results[event.resultIndex];
-      const text = result?.[0]?.transcript ?? '';
+      // Itera desde resultIndex hasta el final concatenando los segmentos nuevos;
+      // Chrome antepone espacios en los parciales, de ahí el trim.
+      let text = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        text += event.results[i]?.[0]?.transcript ?? '';
+      }
+      text = text.trim();
+      if (text === '') return; // nada útil que emitir todavía
+      hadResultRef.current = true;
       setTranscript(text);
       onResultRef.current(text);
     };
 
     recognition.onend = () => {
       recognitionRef.current = null;
-      setStatus((prev) => (prev === 'error' ? prev : 'idle'));
+      setStatus((prev) => {
+        if (prev === 'error') return prev; // error real ya fijado por onerror
+        if (!hadResultRef.current) {
+          // Cerró sin captar nada: no-speech SINTÉTICO, mismo estado observable
+          // que el no-speech real, para reusar el aviso de marca en la UI.
+          setErrorCode('no-speech');
+          return 'error';
+        }
+        return 'idle';
+      });
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       recognitionRef.current = null;
       const code = normalizeErrorCode(event.error);
+      // 'network' = servicio de reconocimiento bloqueado: latch de sesión que
+      // oculta el mic (no se reintenta en un navegador que bloquea el servicio).
+      if (code === 'network') setVoiceUnavailable(true);
       // 'aborted' es una cancelación ordenada: no es un error visible.
       if (code === 'aborted') {
         setStatus('idle');
@@ -127,6 +160,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     };
 
     recognitionRef.current = recognition;
+    hadResultRef.current = false;
     setErrorCode(null);
     setStatus('listening');
     recognition.start();
@@ -142,6 +176,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     isListening: status === 'listening',
     errorCode,
     transcript,
+    voiceUnavailable,
     start,
     stop,
   };

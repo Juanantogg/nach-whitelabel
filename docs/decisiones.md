@@ -249,3 +249,49 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
 - **Descartado:** enlazar al CDN de Elektra (infra de terceros: hotlinking 403, CSP,
   cambios de ruta fuera de control, propiedad del asset); bundlear los SVG de marca
   en `public/` (los mete en el build, rompe el principio white-label).
+
+## 14. UX del dictado por voz: degradación e indicación de captura
+
+- **Contexto (2026-07-04):** al probar la pantalla de bienvenida en runtime con
+  navegadores reales aparecieron tres comportamientos de la `SpeechRecognition` API
+  que la primera integración (feature `voice_ux`) no cubría: Firefox no implementa
+  la API; Brave la implementa pero **bloquea el servicio de reconocimiento de Google**
+  y devuelve `error='network'`; y Chrome a veces cierra la sesión (`onend`) **sin
+  emitir resultado ni error**, dejando al usuario sin saber que no se captó nada.
+  Además, con `interimResults:false` el dictado exigía "varios intentos" y no daba
+  feedback en vivo. (El micrófono que no captaba resultó ser hardware —tapa del
+  portátil abajo—, no la app: descartado como causa.)
+- **Decisión (feature `voice_reliability`):**
+  1. **`interimResults:true`** en `useVoiceInput` (se mantiene `continuous:false`):
+     transcripción parcial en vivo, más tolerante a pausas. El clamp de 15 sigue en
+     `NameField`, que recorta cada emisión; la firma de `onResult` (recibe `string`)
+     no cambia.
+  2. **Ocultar el micrófono (no deshabilitarlo)** cuando no hay forma de dictar:
+     (a) navegador sin soporte (`!isSupported`, p.ej. Firefox) y (b) servicio
+     bloqueado (`error='network'`). Para (b) el hook expone un **latch de sesión
+     `voiceUnavailable`** que se activa al primer `network` y NO se resetea en
+     `start()` (un navegador que bloquea el servicio lo bloquea siempre; no se
+     persiste entre recargas). `NameField` rinde el mic solo si
+     `isSupported && !voiceUnavailable`. **Esto revisa la decisión previa de
+     `voice_ux`** (que deshabilitaba el botón con `voice.unsupported`); ese texto
+     permanece en el schema pero deja de renderizarse.
+  3. **Aviso de sesión sin captura:** si el reconocimiento termina sin haber emitido
+     ninguna transcripción, el hook sintetiza `status='error' + errorCode='no-speech'`,
+     que `NameField` ya mapea al texto de marca `voice.noSpeech` en la región
+     `aria-live`. Esto incluye el caso de **`stop()` manual sin haber hablado**
+     (confirmado con el usuario): se prefiere la simplicidad y un mensaje veraz
+     ("no se capturó nada") a una excepción que distinga parada manual de fin natural.
+- **Por qué:** el input manual es siempre el camino garantizado, así que ocultar el
+  mic nunca rompe el formulario; mostrar un botón inerte confunde más que ayuda. Un
+  latch dedicado es aditivo (no muta `isSupported`, que es feature-detection pura) y
+  trivial de mockear. Reusar `no-speech` para "cerró sin captar" da al usuario el
+  mismo aviso conocido sin ampliar el schema ni el contrato del hook. Cero texto
+  nuevo de marca, cero literales/hex en componentes.
+- **Descartado:** deshabilitar el botón con `voice.unsupported` (deja un control
+  muerto, no comunica la razón mejor que su ausencia); volver `isSupported=false`
+  tras `network` (mezcla "sin API" con "servicio bloqueado", ensucia su semántica);
+  derivar la ocultación de `errorCode` (es efímero, se limpia al reintentar, no da el
+  latch de sesión); un `VoiceStatus`/campo nuevo para "cerró sin captura" (amplía el
+  contrato para el MISMO mensaje visible); `continuous:true` (mantiene el mic abierto,
+  exige gestionar reinicios, no aporta para un nombre corto); una excepción para que
+  `stop()` manual no avise (complejidad sin valor claro).

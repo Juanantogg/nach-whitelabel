@@ -221,9 +221,57 @@
         "Estados de no-soporte y error de permiso/voz se comunican con los textos de marca; sin literales ni hex en componentes",
         "Tests de la integración de voz en NameField (toggle, estado de escucha, no-soporte, error) con el hook/API mockeados (RED antes de implementar)"
       ],
-      "status": "pending",
+      "status": "done",
       "layer": "frontend",
       "depends_on": ["welcome_screen", "voice_capture"]
+    },
+    {
+      "name": "voice_reliability",
+      "title": "Fiabilidad del dictado (interim results, ocultar mic sin dictado, aviso sin captura)",
+      "description": "Mejoras al dictado de voz descubiertas probando voice_ux en runtime (Chrome/Brave/Firefox + micrófono real). El hook con continuous:false + interimResults:false exige 'varios intentos' y no da feedback en vivo; el botón se DESHABILITA cuando no hay dictado (decisión de voice_ux) pero el usuario prefiere OCULTARLO; y una sesión que arranca y cierra sin captar nada (onend limpio, sin 'no-speech') no comunica nada. Esta feature toca el hook (interim + señal de 'terminó sin captura') y NameField (ocultar en vez de deshabilitar). NO reabre lo ya aprobado de voice_ux, lo refina.",
+      "requires_approval": false,
+      "decisions": [
+        "interimResults:true en useVoiceInput: emite transcripción parcial en vivo (más tolerante a pausas, menos 'varios intentos'). El clamp de 15 se sigue aplicando en NameField sobre cada emisión; el mapeo de onResult no se rompe. Cambio mínimo del hook con su propio RED.",
+        "OCULTAR el botón de micrófono (no renderizarlo) cuando NO hay forma de dictar: (a) navegador sin soporte (isSupported=false, p.ej. Firefox) y (b) el servicio de reconocimiento falla siempre por bloqueo/red (errorCode='network', observado en Brave que desactiva el servicio de Google). Revisa/reemplaza la decisión de voice_ux de 'deshabilitar con voice.unsupported': ahora se oculta. voice.unsupported deja de mostrarse en el botón.",
+        "Sesión sin captura: si el reconocimiento termina (onend) sin haber emitido ninguna transcripción, comunicar con el texto de marca EXISTENTE voice.noSpeech ('No te escuchamos…'). Cero texto nuevo en el schema. Requiere que el hook distinga 'terminó habiendo transcrito algo' de 'terminó sin nada' y exponga ese estado (p.ej. status='error' + errorCode='no-speech' sintético, o señal equivalente) sin romper el contrato actual.",
+        "Detección de 'network falla siempre' para ocultar: un solo errorCode='network' basta para ocultar el mic esa sesión (no reintentar en un navegador que bloquea el servicio). No se persiste entre recargas: es estado del hook en runtime.",
+        "El input manual es siempre el camino garantizado: ocultar el mic nunca rompe el formulario. Cero literales/hex; toda la lógica de voz sigue en el hook + NameField, WelcomeScreen intacto."
+      ],
+      "acceptance": [
+        "El hook usa interimResults:true y emite parciales en vivo; NameField sigue aplicando el tope de 15 sobre cada emisión y el campo se rellena de forma perceptible mientras se habla",
+        "El botón de micrófono NO se renderiza cuando isSupported=false (navegador sin soporte)",
+        "El botón de micrófono se OCULTA cuando el reconocimiento falla con errorCode='network' (servicio bloqueado, p.ej. Brave), sin romper el resto de la pantalla",
+        "Una sesión que termina sin captar ninguna transcripción muestra voice.noSpeech (texto de marca existente) en la región aria-live; cero texto nuevo en el schema",
+        "El input manual permanece funcional en todos los casos de degradación; cero literales ni hex en componentes",
+        "Tests en RED antes de implementar: del hook (interimResults emite parciales; onend-sin-captura señaliza no-speech) y de NameField (mic oculto en no-soporte y en network; aviso de sin-captura)"
+      ],
+      "status": "done",
+      "layer": "frontend",
+      "depends_on": ["voice_ux"]
+    },
+    {
+      "name": "voice_universal",
+      "title": "Dictado de voz universal en los 4 navegadores (EXTRA / stretch)",
+      "description": "EXTRA opcional, fuera del enunciado core. Hoy el dictado usa la Web Speech API nativa, que funciona en Chrome/Edge/Safari pero NO en Firefox (no implementa la API) ni en Brave (bloquea el servicio de reconocimiento de Google → errorCode='network'). voice_reliability ya degrada elegante (oculta el mic donde no hay dictado). Esta feature va un paso más: dictado FUNCIONAL en los 4 navegadores usando un 'servicio de IA' (permitido explícitamente por el enunciado, docs/ExamenPractico_Front.md), capturando audio con getUserMedia/MediaRecorder (soportado en Firefox/Brave) y transcribiéndolo. Sería un FALLBACK al camino nativo, no un reemplazo.",
+      "requires_approval": true,
+      "decisions": [
+        "PRIORIDAD: extra/stretch. Solo se implementa si el core (welcome_screen, backend_hardening) y el deploy están impecables y sobra tiempo. NO antes que la ruta a producción.",
+        "Amazon Transcribe DESCARTADO (2026-07-04, usuario) pese a correr sobre el mismo AWS del deploy: complejidad alta (exige PCM crudo transcodificado en el navegador + proxy WebSocket por Express + validar soporte de WS de larga duración en App Runner) y precio ($0.024/min pasado el free tier). Ver progress/voice_universal/research.md.",
+        "CANDIDATAS ABIERTAS (decidir al arrancar la feature, no ahora): (A) Whisper vía backend — MediaRecorder graba, un endpoint de Express reenvía a OpenAI/Groq Whisper y devuelve la transcripción; la API key es secreto de entorno (Parameter Store), nunca en el bundle. Patrón batch, más simple que un WebSocket. (B) transformers.js en el navegador — Whisper WASM 100% cliente, sin backend ni API key ni coste, pero descarga un modelo de ~40-150MB la 1ª vez (impacto en carga). Trade-off central: coste/infra (A necesita key y endpoint) vs peso de descarga (B).",
+        "Arquitectura de FALLBACK: mantener el camino nativo (Web Speech) donde funciona (gratis, instantáneo, cero infra); caer al servicio de IA solo cuando isSupported=false o errorCode='network'. Así Chrome/Safari no pagan coste/descarga y Firefox/Brave ganan dictado. Convierte el 'ocultar mic' de voice_reliability en 'degradación funcional'.",
+        "White-label y contrato intactos: el fallback rellena el MISMO estado del nombre con el mismo clamp de 15; cero literales/hex; el input manual sigue siendo el camino garantizado si todo falla."
+      ],
+      "acceptance": [
+        "Decisión A vs B tomada y justificada en un ADR de docs/decisiones.md antes de implementar (con su research de comparación)",
+        "El dictado por voz funciona en Firefox y Brave (los que hoy fallan), además de seguir funcionando en Chrome/Safari por el camino nativo",
+        "El camino nativo (Web Speech) se mantiene como preferente donde está disponible; el servicio de IA es fallback, no reemplazo",
+        "Si se elige la vía backend (Whisper): la API key es secreto de entorno (Parameter Store), nunca en el repo ni en el bundle; auditar en security-auditor",
+        "La transcripción rellena el mismo campo con el tope de 15; estados de carga/error visibles; cero literales ni hex en componentes",
+        "Tests en RED antes de implementar (captura/fallback mockeados; sin depender de red ni de la API real)"
+      ],
+      "status": "pending",
+      "layer": "fullstack",
+      "depends_on": ["voice_reliability", "welcome_screen", "deploy"]
     }
   ]
 }

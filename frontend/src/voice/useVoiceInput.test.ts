@@ -53,17 +53,35 @@ class MockSpeechRecognition {
 
   /** Simula un resultado FINAL con la transcripción dada. */
   emitFinalResult(transcript: string): void {
-    this.onresult?.({
-      resultIndex: 0,
-      results: {
-        0: {
-          0: { transcript, confidence: 0.9 },
-          isFinal: true,
-          length: 1,
-        },
+    this.emitResults([{ transcript, isFinal: true }]);
+  }
+
+  /** Simula un resultado INTERINO (parcial, isFinal:false) con la transcripción dada. */
+  emitInterimResult(transcript: string): void {
+    this.emitResults([{ transcript, isFinal: false }]);
+  }
+
+  /**
+   * Simula un evento `onresult` con varios segmentos, replicando la estructura
+   * array-like indexable con `.length` de `SpeechRecognitionResultList`. Cada
+   * segmento aporta su `transcript` en `results[i][0]`. `resultIndex` marca el
+   * primer segmento nuevo del evento (el hook itera desde ahí hasta el final).
+   */
+  emitResults(
+    chunks: ReadonlyArray<{ transcript: string; isFinal?: boolean }>,
+    resultIndex = 0,
+  ): void {
+    const results: Record<number, unknown> & { length: number } = {
+      length: chunks.length,
+    };
+    chunks.forEach((chunk, i) => {
+      results[i] = {
+        0: { transcript: chunk.transcript, confidence: 0.9 },
+        isFinal: chunk.isFinal ?? false,
         length: 1,
-      },
+      };
     });
+    this.onresult?.({ resultIndex, results });
   }
 
   /** Simula el fin natural de una sesión de escucha. */
@@ -144,7 +162,9 @@ describe('useVoiceInput — arranque y escucha (acceptance #4, #5, #6)', () => {
   beforeEach(installMock);
   afterEach(uninstallMock);
 
-  it('start() pasa a "listening" y arranca el reconocimiento con lang por defecto, interimResults=false, continuous=false', () => {
+  it('start() pasa a "listening" y arranca el reconocimiento con lang por defecto, interimResults=true, continuous=false (acceptance voice_reliability A1)', () => {
+    // REGRESIÓN (cambio de spec voice_reliability): interimResults pasa de false → true
+    // para habilitar la transcripción parcial en vivo. continuous se mantiene en false.
     const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
 
     act(() => result.current.start());
@@ -156,8 +176,9 @@ describe('useVoiceInput — arranque y escucha (acceptance #4, #5, #6)', () => {
     expect(inst).not.toBeNull();
     expect(inst.start).toHaveBeenCalledTimes(1);
     expect(inst.lang).toBe('es-ES');
-    expect(inst.interimResults).toBe(false);
+    expect(inst.interimResults).toBe(true);
     expect(inst.continuous).toBe(false);
+    expect(inst.maxAlternatives).toBe(1);
   });
 
   it('start() con lang por opción configura ese locale en la instancia (acceptance #4)', () => {
@@ -180,23 +201,51 @@ describe('useVoiceInput — arranque y escucha (acceptance #4, #5, #6)', () => {
     expect(result.current.transcript).toBe('Ana');
   });
 
-  it('onend natural devuelve a "idle" (acceptance #6)', () => {
+  // REGRESIÓN (cambio de spec voice_reliability §Cambio 3): el fin natural SIN
+  // captura ya no vuelve a "idle" sino a "error"/"no-speech" sintético (eso lo
+  // cubren A4/A10). Este test conserva su intención original —el cierre natural
+  // ORDENADO devuelve a "idle"— emitiendo una captura antes de emitEnd(), que es
+  // el invariante que protegía. No solapa A4/A5/A10.
+  it('onend natural TRAS captura devuelve a "idle" (acceptance #6)', () => {
     const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
 
     act(() => result.current.start());
     expect(result.current.status).toBe('listening');
 
+    act(() => MockSpeechRecognition.lastInstance!.emitFinalResult('Ana'));
     act(() => MockSpeechRecognition.lastInstance!.emitEnd());
     expect(result.current.status).toBe('idle');
     expect(result.current.isListening).toBe(false);
   });
 
-  it('stop() detiene ordenadamente: llama instance.stop() y tras onend queda "idle" (acceptance #6)', () => {
+  // REGRESIÓN (cambio de spec voice_reliability §Cambio 3, párrafo sobre stop()
+  // manual): parar la sesión a propósito SIN captura también sintetiza no-speech
+  // (stop() provoca un onend sin captura y onend no distingue el origen). El
+  // invariante "stop() llama inst.stop() una vez" se mantiene; el estado tras el
+  // onend sin captura pasa de "idle" (viejo) a "error"/"no-speech" (nuevo).
+  it('stop() sin captura: llama instance.stop() una vez y tras onend sintetiza error/no-speech', () => {
     const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
 
     act(() => result.current.start());
     const inst = MockSpeechRecognition.lastInstance!;
 
+    act(() => result.current.stop());
+    expect(inst.stop).toHaveBeenCalledTimes(1);
+
+    act(() => inst.emitEnd());
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorCode).toBe('no-speech');
+  });
+
+  // Variante que conserva el cierre a "idle": stop() TRAS haber capturado algo.
+  // Mantiene explícito que parar ordenadamente con captura previa cierra en idle.
+  it('stop() tras captura: llama instance.stop() una vez y tras onend queda "idle"', () => {
+    const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
+
+    act(() => result.current.start());
+    const inst = MockSpeechRecognition.lastInstance!;
+
+    act(() => inst.emitFinalResult('Ana'));
     act(() => result.current.stop());
     expect(inst.stop).toHaveBeenCalledTimes(1);
 
@@ -295,4 +344,171 @@ describe('useVoiceInput — reintento, idempotencia y limpieza (acceptance #9, #
 
     expect(inst.abort).toHaveBeenCalledTimes(1);
   });
+});
+
+/**
+ * RED — voice_reliability (bloque A). Deriva de
+ * `progress/voice_reliability/design.md` → "Contrato de tests para el tester
+ * (RED antes de GREEN) — (A) Tests del HOOK" y "Criterios de aceptación
+ * traducibles a tests".
+ *
+ * Fallan hasta que el hook: (1) fije `interimResults:true` e itere `onresult`
+ * desde `resultIndex` emitiendo en cada evento parcial/final; (2) sintetice
+ * `no-speech` en `onend` sin captura; (3) exponga `voiceUnavailable` con latch
+ * al primer `network`. Todo se dispara sobre el mock del borde del sistema
+ * (SpeechRecognition), nunca sobre la máquina de estados bajo prueba.
+ *
+ * `voiceUnavailable` es un campo NUEVO del retorno del hook (aún inexistente en
+ * `UseVoiceInputResult`): se lee vía este accesor tipado para no romper el
+ * typecheck mientras el RED está vigente. El GREEN añadirá el campo al contrato.
+ */
+function readVoiceUnavailable(result: { current: unknown }): boolean | undefined {
+  return (result.current as { voiceUnavailable?: boolean }).voiceUnavailable;
+}
+
+describe('useVoiceInput — voice_reliability: parciales e iteración (A2, A3)', () => {
+  beforeEach(installMock);
+  afterEach(uninstallMock);
+
+  // Caso A2. Los parciales de Chrome llegan con espacios antepuestos (' Ju'); el
+  // nuevo onresult itera desde resultIndex y hace .trim() antes de emitir, así que
+  // onResult recibe 'Ju' limpio. El lector de índice único SIN trim del código viejo
+  // emitiría ' Ju' y falla esta aserción: es un RED real (no pasa por accidente).
+  it('emite parciales con trim: emitInterimResult(" Ju") llama onResult("Ju") y actualiza transcript; el final lo refina', () => {
+    const onResult = vi.fn();
+    const { result } = renderHook(() => useVoiceInput({ onResult }));
+
+    act(() => result.current.start());
+
+    act(() => MockSpeechRecognition.lastInstance!.emitInterimResult(' Ju'));
+    expect(onResult).toHaveBeenNthCalledWith(1, 'Ju');
+    expect(result.current.transcript).toBe('Ju');
+
+    act(() => MockSpeechRecognition.lastInstance!.emitFinalResult('Juan'));
+    expect(onResult).toHaveBeenNthCalledWith(2, 'Juan');
+    expect(result.current.transcript).toBe('Juan');
+
+    expect(onResult).toHaveBeenCalledTimes(2);
+  });
+
+  // Caso A3
+  it('itera desde resultIndex y concatena varios segmentos con trim: ["Hola ", "mundo"] → "Hola mundo"', () => {
+    const onResult = vi.fn();
+    const { result } = renderHook(() => useVoiceInput({ onResult }));
+
+    act(() => result.current.start());
+    act(() =>
+      MockSpeechRecognition.lastInstance!.emitResults(
+        [{ transcript: 'Hola ' }, { transcript: 'mundo' }],
+        0,
+      ),
+    );
+
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith('Hola mundo');
+    expect(result.current.transcript).toBe('Hola mundo');
+  });
+});
+
+describe('useVoiceInput — voice_reliability: onend sin captura → no-speech sintético (A4, A5, A6, A10)', () => {
+  beforeEach(installMock);
+  afterEach(uninstallMock);
+
+  // Caso A4
+  it('onend SIN ninguna emisión ni error previo deja status="error" y errorCode="no-speech"', () => {
+    const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
+
+    act(() => result.current.start());
+    act(() => MockSpeechRecognition.lastInstance!.emitEnd());
+
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorCode).toBe('no-speech');
+  });
+
+  // Caso A5
+  it('onend CON captura previa vuelve a "idle" y NO sintetiza no-speech (errorCode null)', () => {
+    const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
+
+    act(() => result.current.start());
+    act(() => MockSpeechRecognition.lastInstance!.emitFinalResult('Ana'));
+    act(() => MockSpeechRecognition.lastInstance!.emitEnd());
+
+    expect(result.current.status).toBe('idle');
+    expect(result.current.errorCode).toBeNull();
+  });
+
+  // Caso A6
+  it('un no-speech real (onerror) seguido de onend no se altera: sigue error/no-speech', () => {
+    const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
+
+    act(() => result.current.start());
+    act(() => MockSpeechRecognition.lastInstance!.emitError('no-speech'));
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorCode).toBe('no-speech');
+
+    act(() => MockSpeechRecognition.lastInstance!.emitEnd());
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorCode).toBe('no-speech');
+  });
+
+  // Caso A10
+  it('la marca de "hubo captura" se resetea por sesión: 1ª con captura (idle), 2ª sin captura → error/no-speech', () => {
+    const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
+
+    // Sesión 1: capta algo y cierra en idle.
+    act(() => result.current.start());
+    act(() => MockSpeechRecognition.lastInstance!.emitFinalResult('Ana'));
+    act(() => MockSpeechRecognition.lastInstance!.emitEnd());
+    expect(result.current.status).toBe('idle');
+
+    // Sesión 2: sin captura → debe sintetizar no-speech (no arrastra el true previo).
+    act(() => result.current.start());
+    act(() => MockSpeechRecognition.lastInstance!.emitEnd());
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorCode).toBe('no-speech');
+  });
+});
+
+describe('useVoiceInput — voice_reliability: latch voiceUnavailable por network (A7, A8, A9)', () => {
+  beforeEach(installMock);
+  afterEach(uninstallMock);
+
+  // Caso A7
+  it('voiceUnavailable arranca false y se activa al primer errorCode="network"', () => {
+    const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
+
+    expect(readVoiceUnavailable(result)).toBe(false);
+
+    act(() => result.current.start());
+    act(() => MockSpeechRecognition.lastInstance!.emitError('network'));
+
+    expect(result.current.errorCode).toBe('network');
+    expect(readVoiceUnavailable(result)).toBe(true);
+  });
+
+  // Caso A8
+  it('el latch persiste tras reintentar: start() limpia errorCode a null pero voiceUnavailable sigue true', () => {
+    const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
+
+    act(() => result.current.start());
+    act(() => MockSpeechRecognition.lastInstance!.emitError('network'));
+    expect(readVoiceUnavailable(result)).toBe(true);
+
+    act(() => result.current.start());
+    expect(result.current.errorCode).toBeNull();
+    expect(readVoiceUnavailable(result)).toBe(true);
+  });
+
+  // Caso A9
+  it.each(['not-allowed', 'no-speech', 'audio-capture'])(
+    'el error "%s" NO activa el latch: voiceUnavailable sigue false',
+    (raw) => {
+      const { result } = renderHook(() => useVoiceInput({ onResult: noop }));
+
+      act(() => result.current.start());
+      act(() => MockSpeechRecognition.lastInstance!.emitError(raw));
+
+      expect(readVoiceUnavailable(result)).toBe(false);
+    },
+  );
 });
