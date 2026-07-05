@@ -635,3 +635,71 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
   plantilla `api-<key>` NO aplica en dev — por eso dev sigue con `VITE_API_URL`. La derivación
   por host solo se activa en prod (`appEnv==='prod'`), coherente con cómo `resolveBrand` trata
   los entornos.
+
+## 21. Pipeline CI/CD: rama `staging` de integración + deploy del FRONT por Actions (backend auto por App Runner)
+
+- **Contexto (2026-07-05):** con dev y prod funcionando, se automatiza el deploy. El ADR 17
+  planteó `dev`→dev y `main`→prod, pero al operar salió un problema real: **cada push a una
+  rama con backend dispara un redeploy de App Runner** (que tarda ~5-8 min y a veces falla
+  opacamente — se sufrió con shopinbaz, 4 CREATE_FAILED). Mandar cada PR de feature
+  directo a `dev` provocaría re-deploys constantes e innecesarios del backend.
+- **Decisión — cuatro niveles de rama con una de integración sin deploy:**
+  ```
+  feature ─PR→ staging ─PR→ dev ─PR→ main
+             (solo CI)   (deploy dev) (deploy prod)
+  ```
+  - **`staging`:** rama de integración donde caen los PRs de features. Corre **solo CI**
+    (lint/test/typecheck/audit/gitleaks) — **NO despliega nada, ni front ni backend**.
+    Acumula varias tareas estables antes de promocionar. Ningún App Runner la observa.
+  - **`dev`:** al mergear `staging`→`dev`, se despliega el entorno dev.
+  - **`main`:** al mergear `dev`→`main`, se despliega prod (elektra + shopinbaz).
+  - Promoción **siempre por PR** (revisable/auditable), no push directo.
+- **Decisión — qué despliega el pipeline:**
+  - Las **GitHub Actions despliegan SOLO el FRONT** (build con las env del entorno →
+    `aws s3 sync` → `cloudfront create-invalidation`). Un workflow que, según la rama
+    (`dev` o `main`), apunta al bucket/distribución correspondiente. Para `main` (prod),
+    el mismo build sirve a elektra y shopinbaz (front compartido, ADR 20) → un solo
+    bucket/distribución, una invalidación.
+  - El **BACKEND se auto-despliega solo**: los App Runner ya tienen
+    `AutoDeploymentsEnabled=true` observando su rama (dev→`dev`, elektra/shopinbaz→`main`).
+    Al hacer push a esas ramas, App Runner detecta el commit y redeploya su servicio sin
+    intervención de las Actions. El pipeline **no llama a App Runner** (ni `start-deployment`
+    ni espera RUNNING).
+- **Por qué:**
+  - `staging` sin deploy es la pieza que resuelve el problema real: integrar features sin
+    machacar App Runner con redeploys por cada PR. Los deploys ocurren solo en las
+    promociones deliberadas (staging→dev, dev→main).
+  - Separar "Actions despliega el front" de "App Runner auto-despliega el backend" mantiene
+    el pipeline simple y sin tener que manejar en CI los fallos/tiempos de App Runner (que
+    son opacos). Cada capa hace lo suyo; menos superficie que mantener.
+  - Deploy por push tras merge (no `workflow_dispatch` manual) mantiene el flujo automático
+    una vez el PR se aprueba; el control humano está en aprobar el PR de promoción.
+- **Consecuencia — CI en todas las ramas:** el workflow de CI (`ci.yml`) hoy solo dispara en
+  `main`; hay que ampliarlo a `staging` y `dev` (push + PR) para que la calidad se valide en
+  cada nivel. El workflow de deploy es separado y dispara en push a `dev`/`main`.
+- **Descartado:**
+  - **PRs de feature directo a `dev`:** redeploys de App Runner por cada PR (el problema).
+  - **Actions controlando el deploy del backend** (`start-deployment` + esperar RUNNING):
+    mete en el pipeline los tiempos y fallos opacos de App Runner; el auto-deploy nativo ya
+    lo cubre sin ese acoplamiento.
+  - **Deploy manual (`workflow_dispatch`) en dev/main:** un paso manual extra sin ganancia;
+    el gate humano ya está en el PR de promoción.
+  - **Front separado por marca en prod:** ya descartado (ADR 20) — un solo build/bucket sirve
+    ambas, así que el deploy de prod es una sola operación, no dos.
+
+### 21.a — Branch protection: `main`, `dev` y `staging` solo por PR (2026-07-05)
+
+- **Decisión:** las tres ramas del flujo (`main`, `dev`, `staging`) tienen **branch
+  protection en GitHub: prohibido el push directo, solo se actualizan vía Pull Request**
+  con el CI en verde. Ningún cambio entra a estas ramas sin pasar por un PR revisable.
+- **Por qué:** hace cumplir el flujo del ADR 21 por construcción — sin protección, un push
+  directo a `dev`/`main` saltaría staging y dispararía un deploy sin revisión. La protección
+  garantiza que feature→staging→dev→main sea el ÚNICO camino, y que cada promoción pase el CI.
+- **Config aplicada por rama:** `required_pull_request_reviews` (PR obligatorio),
+  `required_status_checks` (CI debe pasar: quality + secret-scan), y bloqueo de push directo
+  (`enforce_admins` para que aplique también al owner). Como es un repo de un solo
+  desarrollador, los approvals requeridos se dejan en 0 (no hay otro revisor), pero el PR y
+  el CI verde siguen siendo obligatorios — el gate real es el CI, no un segundo par de ojos.
+- **Nota:** al ser owner único, se puede mergear el propio PR; la protección impide el push
+  directo y exige el PR + CI, que es lo que se busca (trazabilidad + calidad, no un segundo
+  aprobador que no existe).

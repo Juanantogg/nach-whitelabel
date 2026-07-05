@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev, staging]
   pull_request:
-    branches: [main]
+    branches: [main, dev, staging]
 
 # Permisos mínimos por defecto para el GITHUB_TOKEN de todo el workflow: solo
 # lectura del repo. Mitiga que una Action comprometida use el token para escribir
