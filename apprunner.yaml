@@ -29,7 +29,9 @@ build:
       # Poda devDeps: deja solo runtime en la imagen final (imagen más pequeña,
       # menos superficie). Reinstala solo prod desde el lockfile (tampoco dispara
       # la cuarentena).
-      - pnpm install --frozen-lockfile --filter @nach/backend --prod
+      # CI=true: la poda recrea node_modules; sin TTY pnpm pide confirmación y
+      # aborta (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY). CI=true la autoriza.
+      - CI=true pnpm install --frozen-lockfile --filter @nach/backend --prod
 
 run:
   # Fija major.minor.patch para builds reproducibles (evita que un patch nuevo
