@@ -481,6 +481,43 @@ Namecheap.** Se desasoció el dominio custom y se usa la **URL nativa de App Run
 > CloudFront delante del backend (CNAME corto, reusa el cert ACM con SAN api-dev), o delegar
 > solo `api-dev` a Route 53 (sin límite de 60 chars).
 
+### 7.7.b Dominio bonito api-dev vía CloudFront delante de App Runner ✅
+En vez del dominio custom de App Runner (bloqueado por Namecheap), se pone **CloudFront con
+alias `api-dev.garcia3apps.com` delante del backend App Runner** (custom origin). Reusa el
+cert ACM ya ISSUED (SAN `api-dev`) → **sin registros de validación largos**, solo un CNAME
+corto. Config para una API (no assets): `CachingDisabled` + `AllViewerExceptHostHeader`
+(NO reenviar el Host, o App Runner no enruta), todos los métodos (POST/PUT/…).
+```bash
+# scratchpad/cf-apidev.json: origin custom App Runner (https-only, TLSv1.2),
+#   CachePolicy 4135ea2d (CachingDisabled), OriginRequestPolicy b689b0a8 (AllViewerExceptHostHeader),
+#   AllowedMethods todos, ViewerCertificate = cert ACM (SAN api-dev).
+aws cloudfront create-distribution --distribution-config file://scratchpad/cf-apidev.json
+```
+- **Distribution Id:** `E2AUKU8FUAX16`
+- **CloudFront domain:** `d31juaupbsqazq.cloudfront.net`
+
+**CNAME en Namecheap (usuario):** `api-dev` → `d31juaupbsqazq.cloudfront.net` (corto, cabe).
+Borrar los CNAME de validación viejos del dominio custom de App Runner (ya no sirven).
+El cert ACM ya cubre api-dev por SAN → NO necesita revalidación.
+
+> ⚠️ **Propagación DNS inconsistente en Namecheap (2026-07-05):** tras cambiar el CNAME
+> `api-dev` de App Runner a CloudFront, los nameservers de Namecheap devolvían respuestas
+> MIXTAS durante la propagación: `dig @8.8.8.8` → CloudFront (nuevo), pero el resolver del
+> sistema/navegador → aún `2nmib8gm9v...awsapprunner.com` (viejo). El navegador pegaba a
+> App Runner directo (cert `*.awsapprunner.com`) → `ERR_CERT_COMMON_NAME_INVALID`.
+> **NO es un fallo de infra:** el cert servido por CloudFront cubre api-dev (SANs verificados),
+> `/health` y `/crypto/public-key` dan 200 con `ssl_verify:0` forzando la IP de CloudFront.
+> Es solo el TTL viejo (~30 min) expirando de forma desigual. Se resuelve solo. Verificar de
+> nuevo el E2E cuando `host api-dev.garcia3apps.com` devuelva cloudfront (no awsapprunner).
+
+**RESUELTO ✅ (propagación completa):** `host` y `dig @8.8.8.8` devuelven ambos
+`d31juaupbsqazq.cloudfront.net`. E2E re-verificado con Playwright en
+`dev.garcia3apps.com/?brand=elektra` usando el **dominio bonito**:
+`GET https://api-dev.garcia3apps.com/crypto/public-key` → 200,
+`POST https://api-dev.garcia3apps.com/names` → 200, 0 errores de consola, "registro es: N".
+**El front dev ya está buildeado apuntando a `https://api-dev.garcia3apps.com`** (dominio
+bonito, no la URL nativa). DEV 100% redondo.
+
 ### 7.8 Recablear front dev + prueba END-TO-END ✅
 ```bash
 cd frontend
@@ -506,6 +543,10 @@ aws cloudfront create-invalidation --distribution-id E2F4MOT22AV6BH --paths "/*"
 - Flujo cifrado nombre→contador→respuesta verificado en el navegador real.
 
 Pendiente (no bloqueante): dominio bonito `api-dev`, clonar a prod, GitHub Actions.
+
+> **PROD vive en su propio runbook:** [`runbook-prod.md`](runbook-prod.md). Prod diverge de
+> dev por el aislamiento por empresa (ADR 20): front compartido pero backend+BD separados por
+> marca. Este archivo (dev) queda como plantilla de referencia.
 
 ---
 

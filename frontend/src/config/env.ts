@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { resolveApiUrl } from '../api/resolveApiUrl';
+import { BASE_DOMAIN } from '../brand/core/constants';
 
 /**
  * Fuente ÚNICA, tipada y validada, del acceso a `import.meta.env.VITE_*`.
@@ -45,20 +47,32 @@ export type EnvResult = { success: true; data: Env } | { success: false; error: 
  * Valida el entorno de forma pura y testeable. `source` es inyectable (default
  * `import.meta.env`) para no depender del entorno global en tests. NUNCA lanza:
  * usa `safeParse` y, con las vars actuales, siempre devuelve `{ success: true }`.
+ *
+ * ADR 20.a: `apiUrl` no es el `VITE_API_URL` horneado tal cual, sino el resultado
+ * de `resolveApiUrl(hostname, appEnv, BASE_DOMAIN, VITE_API_URL)`. En prod un host
+ * de marca (`elektra.<base>`) deriva `https://api-elektra.<base>`; apex/www/host
+ * ajeno/dev caen al `VITE_API_URL` (fallback). `hostname` es inyectable (default
+ * `window.location.hostname`), espejo de `source`, para probar el cableado de
+ * forma pura sin stubear el `window` global.
  */
 export function validateEnv(
   source: Record<string, string | undefined> = import.meta.env,
+  hostname: string = window.location.hostname,
 ): EnvResult {
   const parsed = envSchema.safeParse(source);
   if (!parsed.success) {
     return { success: false, error: parsed.error };
   }
+  const appEnv = parsed.data.VITE_APP_ENV;
+  // `parsed.data.VITE_API_URL` ya viene normalizado (sin trailing slash) por el
+  // transform del schema; se pasa así al resolver como fallback horneado.
+  const apiUrl = resolveApiUrl(hostname, appEnv, BASE_DOMAIN, parsed.data.VITE_API_URL);
   return {
     success: true,
     data: {
-      apiUrl: parsed.data.VITE_API_URL,
+      apiUrl,
       defaultBrand: parsed.data.VITE_DEFAULT_BRAND,
-      appEnv: parsed.data.VITE_APP_ENV,
+      appEnv,
     },
   };
 }

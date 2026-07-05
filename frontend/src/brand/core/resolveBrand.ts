@@ -1,3 +1,4 @@
+import { brandKeyFromHost } from './brandKeyFromHost';
 import { DEFAULT_BRAND_KEY } from './registry';
 import type { BrandKey } from './schema';
 
@@ -18,26 +19,6 @@ export interface ResolveBrandInput {
    * distingue con este flag. Ausente/`undefined` ⇒ se trata como `'prod'`.
    */
   appEnv?: 'dev' | 'prod';
-}
-
-/**
- * Extrae la key de marca del subdominio en producción contando labels contra el
- * dominio base. Solo un único label extra sobre el base (`elektra.<base>`) es una
- * marca; el apex, `www.<base>`, un host ajeno o un label vacío caen a
- * `DEFAULT_BRAND_KEY`. No se filtra contra catálogo (key abierta).
- */
-function brandFromSubdomain(hostname: string, baseDomain: string): BrandKey {
-  const suffix = `.${baseDomain}`;
-  if (!hostname.endsWith(suffix)) {
-    return DEFAULT_BRAND_KEY;
-  }
-
-  const prefix = hostname.slice(0, -suffix.length);
-  // Exactamente un label extra, no vacío y distinto de 'www'.
-  if (prefix === '' || prefix.includes('.') || prefix === 'www') {
-    return DEFAULT_BRAND_KEY;
-  }
-  return prefix;
 }
 
 /**
@@ -62,7 +43,7 @@ export function resolveBrand(input: ResolveBrandInput): BrandKey {
 
   const acceptsQueryBrand = isDev || appEnv === 'dev';
   if (!acceptsQueryBrand) {
-    return brandFromSubdomain(hostname, baseDomain);
+    return brandKeyFromHost(hostname, baseDomain) ?? DEFAULT_BRAND_KEY;
   }
 
   const queryBrand = new URLSearchParams(search).get('brand');

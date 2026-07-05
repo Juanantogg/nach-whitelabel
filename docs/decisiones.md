@@ -552,3 +552,86 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
     CloudFront, no con S3 directo; el CORS lo pone la ResponseHeadersPolicy de CloudFront.
   - **Dejar el `Accept` y añadir `OPTIONS` a AllowedMethods de la distribución:** el
     OPTIONS seguiría yendo al origen S3 (403); no lo resuelve.
+
+## 20. Prod multi-marca: front compartido, pero backend y datos AISLADOS por empresa
+
+- **Contexto (2026-07-05):** al planificar el entorno de producción surge la pregunta de
+  cuánta infra comparten Elektra y Shopinbaz. En el mundo real ambas son marcas de **Grupo
+  Salinas pero EMPRESAS DISTINTAS**: sus datos de clientes (nombres + números consecutivos)
+  no pueden mezclarse (privacidad, cumplimiento, y un contador consecutivo es por-empresa,
+  no global). El white-label ya permite que el **front** sea común (mismo bundle, la marca
+  se elige por subdominio, ADR 5), pero el **backend procesa datos** y ahí el aislamiento
+  importa. Se consideraron dos modelos: (a) un backend compartido multi-tenant que enruta a
+  la BD por host, (b) un backend por empresa con su propia BD.
+- **Decisión — la frontera de aislamiento va entre "sin datos" y "con datos":**
+  - **Compartido (sin datos de cliente):**
+    - **Front:** UN bucket S3 + UNA distribución CloudFront con DOS aliases
+      (`elektra.garcia3apps.com`, `shopinbaz.garcia3apps.com`) sirviendo el MISMO bundle
+      (`VITE_APP_ENV=prod`); `resolveBrand` lee el subdominio y auto-tematiza (ADR 5/18).
+      Añadir una marca = un alias + un CNAME + su JSON en el bucket de marcas, cero infra.
+    - **Bucket de marcas** `brands.garcia3apps.com` (config/assets públicos): común, ya lo es.
+    - **Certificado ACM:** el mismo (ya cubre todas las SANs).
+  - **AISLADO por empresa (toca datos):**
+    - **Backend:** UN App Runner POR MARCA (`nach-elektra-prod`, `nach-shopinbaz-prod`),
+      mismo código, distinta config/secretos. `elektra.` pega a su backend, `shopinbaz.` al
+      suyo (vía su propio `api.` o subdominio de API por marca).
+    - **Base de datos:** UN cluster Atlas POR EMPRESA. Los registros de Elektra nunca tocan
+      la BD de Shopinbaz. Contadores consecutivos independientes.
+    - **Secretos:** namespaces separados en Parameter Store (`/nach/elektra/*`,
+      `/nach/shopinbaz/*`), cada backend con su instance role al suyo.
+- **Por qué:** el aislamiento por **compute** (no solo por BD) hace imposible por
+  construcción que un bug de enrutado cruce datos entre dos empresas distintas — el peor
+  incidente posible aquí. El código es idéntico (cero duplicación de lógica); lo único que
+  cambia por marca es env + secretos + a qué Atlas apunta, exactamente como el white-label
+  ya trata el front. El front compartido, en cambio, no toca datos y es justo el patrón que
+  el enunciado premia (una marca nueva = configuración, no código).
+- **Consecuencia sobre "prod = ¿hacer dev dos veces?":** NO para el front (un CloudFront con
+  dos aliases, una pasada). SÍ se duplica el par backend+BD, pero es la duplicación
+  *correcta* y barata en esfuerzo (mismo `apprunner.yaml`, distinto servicio/secretos). Los
+  GitHub Actions parametrizan esa repetición (marca → env) para no montarla a mano dos veces.
+- **Descartado:**
+  - **Backend compartido multi-tenant** (enruta BD por host en un solo App Runner): menos
+    infra, pero el compute es multi-empresa y un fallo de enrutado cruzaría datos de clientes
+    entre Elektra y Shopinbaz; exige lógica multi-DB en el backend (más superficie de bug)
+    para AHORRAR un servicio que en App Runner es barato. No compensa frente al aislamiento.
+  - **BD compartida con discriminador por marca** (una colección con campo `brand`): descarta
+    de plano — un solo error de filtro `WHERE brand=` expone datos entre empresas; contadores
+    y aislamiento de cumplimiento imposibles de garantizar.
+  - **Front separado por marca** (dos buckets/distribuciones): rompe el white-label (el
+    sentido es que el MISMO front sirva ambas por subdominio); duplica sin aislar nada útil.
+
+### 20.a — El front deriva el backend del host en runtime (no build-time), plantilla `api-<key>`
+
+- **Contexto (2026-07-05):** el ADR 20 comparte el front entre marcas. Observación válida del
+  usuario: un front compartido es una **superficie común** — un error lógico o un
+  `VITE_API_URL` mal horneado podría hacer que un cliente de Elektra hable con el backend de
+  Shopinbaz (cruce de datos entre empresas). Hoy el front hornea `VITE_API_URL` en build-time
+  (una URL fija por bundle), así que en prod un solo bundle no puede tener dos URLs de API.
+- **Decisión:** en **producción**, el front **deriva la URL del backend del host en runtime**,
+  con una **plantilla determinista**: `https://api-<key>.garcia3apps.com`, donde `<key>` es la
+  MISMA key de marca que `resolveBrand` extrae del subdominio (`elektra.garcia3apps.com` →
+  `api-elektra.garcia3apps.com`). Sin condicionales por marca, sin mapa configurable: el host
+  de la página determina el backend de forma física. En **dev/local** se mantiene
+  `VITE_API_URL` (build-time), como hoy. La resolución vive en `config/env` o un helper
+  `resolveApiUrl(hostname, appEnv, baseDomain, viteApiUrl)` puro y testeable, análogo a
+  `resolveBrand`; `apiUrl` se sigue inyectando en `fetchPublicKey`/`apiFetch` (no cambia su
+  contrato).
+- **Por qué:** reduce el riesgo residual del front compartido a casi cero — como el backend
+  se deriva del `hostname` real del navegador con una plantilla sin ramas, un cliente en
+  `elektra.` **no puede** pegar a `shopinbaz.` aunque hubiera un bug de marca (tendría que
+  estar físicamente en otro host). Reusa la key ya resuelta (una sola fuente de verdad de
+  "qué marca es esta página"). Escala a marca nueva sin tocar código (misma plantilla).
+  Mantiene el white-label (un solo front) sin el riesgo de cruce que preocupaba.
+- **Descartado:**
+  - **`VITE_API_URL` build-time en prod:** un solo valor por bundle no sirve a dos marcas; y
+    si se derivara por lógica en vez de por host, reaparece el riesgo de cruce.
+  - **`api.<marca>.garcia3apps.com` (anidado):** requiere reemitir el cert con SANs nuevas y
+    anida subdominios; `api-<key>` es plano y el cert actual ya lo contempla para las marcas
+    conocidas (para marcas futuras se amplía el cert, igual que cualquier subdominio nuevo).
+  - **apiUrl en el `<key>.json` de marca:** mete la URL del backend en config pública y acopla
+    front↔config; una entrada mal puesta en el JSON cruzaría marcas — justo el error lógico
+    que esta decisión busca evitar. El backend es infraestructura, no configuración de marca.
+- **Nota:** en dev el backend es `api-dev.` (un único backend, datos de dev), así que la
+  plantilla `api-<key>` NO aplica en dev — por eso dev sigue con `VITE_API_URL`. La derivación
+  por host solo se activa en prod (`appEnv==='prod'`), coherente con cómo `resolveBrand` trata
+  los entornos.
