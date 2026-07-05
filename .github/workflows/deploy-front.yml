@@ -28,7 +28,9 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version-file: .nvmrc
+          # Node 22: pnpm 11.10 requiere >=22.13 (el .nvmrc dice 20, insuficiente).
+          # Mismo valor que ci.yml.
+          node-version: 22
           cache: pnpm
 
       - name: Install deps
