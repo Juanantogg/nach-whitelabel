@@ -319,7 +319,7 @@ export REPO_URL=https://github.com/<owner>/<repo>   # el repo del monorepo
 ```bash
 aws ssm put-parameter --region "$AWS_REGION" \
   --name /nach/dev/MONGODB_URI --type SecureString \
-  --value 'mongodb+srv://USER:PASS@cluster-prod.xxxx.mongodb.net/nach?retryWrites=true&w=majority'
+  --value 'mongodb+srv://<user>:<pass>@<cluster>.mongodb.net/nach?retryWrites=true&w=majority'
 
 # El PEM tiene saltos de línea: pásalo desde archivo para no corromperlo.
 aws ssm put-parameter --region "$AWS_REGION" \

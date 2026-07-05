@@ -385,7 +385,7 @@ connection en `AVAILABLE`).
 ### 7.3 Secretos a Parameter Store (usuario, para no pasar por el chat)
 ```bash
 aws ssm put-parameter --region us-east-1 --name /nach/dev/MONGODB_URI --type SecureString \
-  --value 'mongodb+srv://USER:PASS@cluster.mongodb.net/nach?retryWrites=true&w=majority'
+  --value 'mongodb+srv://<user>:<pass>@<cluster>.mongodb.net/nach?retryWrites=true&w=majority'
 aws ssm put-parameter --region us-east-1 --name /nach/dev/CRYPTO_PRIVATE_KEY --type SecureString \
   --value "$(cat /ruta/private-key.pem)"
 ```
