@@ -14,11 +14,16 @@ packages:
 # comprometida antes de que entre en nuestro árbol de dependencias.
 minimumReleaseAge: 1440
 
-# Ningún paquete puede ejecutar scripts de build/postinstall. Map vacío = nadie
-# permitido; con strictDepBuilds (default true) una dep nueva con postinstall
-# hace FALLAR el install en vez de ejecutarlo en silencio. Hoy ninguna dep del
-# repo tiene scripts de instalación, así que el map vacío no rompe nada.
-allowBuilds: {}
+# Allowlist EXPLÍCITA de builds permitidos. Con strictDepBuilds (default true)
+# cualquier dep con postinstall que NO esté aquí hace FALLAR el install en vez de
+# ejecutarlo en silencio — así una dep comprometida con postinstall no pasa
+# desapercibida. Solo se permite lo estrictamente necesario y legítimo:
+#   - esbuild: bundler nativo de Vite/tsx (dep transitiva de dev). Su postinstall
+#     instala su binario nativo; sin permitirlo el install falla en CI
+#     (ERR_PNPM_IGNORED_BUILDS). Paquete conocido, no es riesgo de supply-chain.
+# Revisar en cada bump: un build nuevo debe justificarse antes de añadirlo.
+allowBuilds:
+  esbuild: true
 
 # Bloquea subdependencias con specs "exóticos" (git/url/tarball) en el árbol
 # transitivo — vector típico de inyección. Explícito aunque ya sea el default.
