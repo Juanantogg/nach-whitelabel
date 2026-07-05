@@ -15,7 +15,7 @@ export async function createRecord(name: string): Promise<number> {
   const counter = await Counter.findOneAndUpdate(
     { _id: SEQUENCE_ID },
     { $inc: { seq: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true },
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true },
   ).lean();
 
   const sequence = counter.seq;
