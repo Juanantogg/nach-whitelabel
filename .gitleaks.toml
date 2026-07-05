@@ -31,5 +31,10 @@ description = "Placeholders y ejemplos que no son secretos reales"
 paths = ['''\.env\.example$''']
 regexes = [
   '''BEGIN PRIVATE KEY-----\\n\.\.\.\\n-----END''',
-  '''<user>:<pass>@<cluster>''',
+  # Placeholders de credenciales en URIs de Mongo de la documentación (runbooks,
+  # research). NO son secretos: son valores de relleno obvios. gitleaks compara
+  # el secreto CAPTURADO por la regla (que corta en `@`), así que el patrón debe
+  # terminar en `@`, no incluir `<cluster>`.
+  '''<user>:<pass>@''',
+  '''USER:PASS@''',
 ]
