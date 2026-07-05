@@ -97,7 +97,9 @@ describe('loadBrand — dev (S3 primero, luego seed, luego default)', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(fetchFn).toHaveBeenCalledWith(
       'https://s3.example.com/brands/elektra.json',
-      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+      // ADR 19: el fetch debe seguir apuntando a la URL correcta pero SIN el
+      // header `Accept` (ver el test dedicado más abajo). La URL sí es contrato.
+      expect.anything(),
     );
     // Se usa lo que devolvió S3, no la seed de elektra ni el default.
     expect(config.colors.primary).toBe(SHOPINBAZ_PRIMARY);
@@ -222,6 +224,46 @@ describe('loadBrand — producción (S3 con fallback directo al default; seeds N
     });
 
     expect(config).toEqual(DEFAULT_BRAND);
+  });
+});
+
+describe('loadBrand — fetch de S3 es una petición CORS "simple" (ADR 19)', () => {
+  /**
+   * ADR 19 (docs/decisiones.md §19): `fetchFromS3` no debe mandar un header
+   * `Accept` (ni ningún header no-estándar) en el fetch cross-origin del
+   * `<key>.json`. Un `Accept: application/json` convierte la petición en
+   * no-simple → dispara un preflight `OPTIONS` que el origen S3 privado (OAC)
+   * rechaza con 403 → el navegador aborta con error CORS. La petición debe ser
+   * CORS-simple: solo GET, sin headers que fuercen preflight.
+   *
+   * RED: hoy `fetchFromS3` llama `fetchFn(url, { headers: { Accept: 'application/json' } })`,
+   * así que las aserciones "sin Accept" / "sin headers" fallan.
+   */
+
+  it('no manda un header `Accept` (evita el preflight OPTIONS contra S3/CloudFront)', async () => {
+    const fetchFn = fetchOk(elektraSeed);
+
+    await loadBrand('elektra', {
+      isDev: false,
+      s3BaseUrl: 'https://s3.example.com/brands',
+      fetchFn,
+      seeds,
+    });
+
+    // La URL sigue siendo contrato; el init NO debe contener headers.Accept.
+    expect(fetchFn).toHaveBeenCalledWith(
+      'https://s3.example.com/brands/elektra.json',
+      expect.not.objectContaining({ headers: expect.anything() }),
+    );
+
+    // Aserción explícita adicional sobre el argumento capturado: si viniera un
+    // init, no debe traer un header `Accept`.
+    const [, init] = (fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit | undefined,
+    ];
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    expect(headers).not.toHaveProperty('Accept');
   });
 });
 

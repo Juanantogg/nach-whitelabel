@@ -159,6 +159,143 @@ describe('resolveBrand — desarrollo/tests (?brand= > env > default; baseDomain
   });
 });
 
+/**
+ * ADR 18 — `?brand=` en el deploy dev vía `VITE_APP_ENV` (staging ≠ prod).
+ *
+ * El deploy `dev` (dev.garcia3apps.com) es un BUILD DE PRODUCCIÓN (`isDev === false`),
+ * así que hoy resolveBrand resuelve solo por subdominio: `dev.garcia3apps.com` → 'dev'
+ * → inexistente → default, y `?brand=` se ignora. Queremos que ese entorno acepte
+ * `?brand=` como en local, PERO que prod siga solo-subdominio (garantía del ADR 5).
+ *
+ * DECISIÓN: nuevo campo inyectado en `ResolveBrandInput`: `appEnv?: 'dev' | 'prod'`
+ * (ausente/undefined ⇒ tratar como 'prod'). Nueva regla: se acepta `?brand=` cuando
+ * `isDev === true` OR `appEnv === 'dev'`. En prod (no isDev y appEnv !== 'dev')
+ * sigue SOLO-subdominio, ignorando `?brand=`.
+ *
+ * RED: la firma actual NO tiene `appEnv` y la lógica solo mira `isDev`, así que en
+ * el bloque "deploy dev" (isDev=false, appEnv='dev') resolveBrand cae al camino
+ * subdominio e ignora `?brand=` → estos casos fallan hasta que el implementer añada
+ * `appEnv` a la interfaz y a la condición.
+ */
+describe('resolveBrand — deploy dev (ADR 18: isDev=false + appEnv="dev" acepta ?brand=)', () => {
+  it('acepta ?brand= en el deploy dev aunque sea build de producción (isDev=false)', () => {
+    const key = resolveBrand({
+      hostname: `dev.${BASE}`,
+      search: '?brand=elektra',
+      isDev: false,
+      appEnv: 'dev',
+      baseDomain: BASE,
+    });
+    expect(key).toBe('elektra');
+  });
+
+  it('en deploy dev sin ?brand= usa VITE_DEFAULT_BRAND (no el subdominio)', () => {
+    const key = resolveBrand({
+      hostname: `dev.${BASE}`,
+      search: '',
+      isDev: false,
+      appEnv: 'dev',
+      defaultBrand: 'shopinbaz',
+      baseDomain: BASE,
+    });
+    expect(key).toBe('shopinbaz');
+  });
+
+  it('en deploy dev sin ?brand= ni VITE_DEFAULT_BRAND cae a DEFAULT_BRAND_KEY', () => {
+    const key = resolveBrand({
+      hostname: `dev.${BASE}`,
+      search: '',
+      isDev: false,
+      appEnv: 'dev',
+      baseDomain: BASE,
+    });
+    expect(key).toBe(DEFAULT_BRAND_KEY);
+  });
+
+  it('el subdominio "dev" NO fuerza la marca "dev" cuando appEnv="dev" (respeta ?brand=)', () => {
+    const key = resolveBrand({
+      hostname: `dev.${BASE}`,
+      search: '?brand=banco_azteca',
+      isDev: false,
+      appEnv: 'dev',
+      baseDomain: BASE,
+    });
+    // Con appEnv='dev' manda la query, NO el label 'dev' del subdominio.
+    expect(key).not.toBe('dev');
+    expect(key).toBe('banco_azteca');
+  });
+
+  it('el subdominio "dev" sin ?brand= cae a default, nunca a la marca "dev"', () => {
+    const key = resolveBrand({
+      hostname: `dev.${BASE}`,
+      search: '',
+      isDev: false,
+      appEnv: 'dev',
+      baseDomain: BASE,
+    });
+    expect(key).not.toBe('dev');
+    expect(key).toBe(DEFAULT_BRAND_KEY);
+  });
+});
+
+describe('resolveBrand — prod (ADR 18: appEnv="prod" o ausente ⇒ solo subdominio, ?brand= ignorado)', () => {
+  it('con appEnv="prod" el subdominio manda y ?brand= se ignora', () => {
+    const key = resolveBrand({
+      hostname: `elektra.${BASE}`,
+      search: '?brand=shopinbaz',
+      isDev: false,
+      appEnv: 'prod',
+      baseDomain: BASE,
+    });
+    expect(key).toBe('elektra');
+  });
+
+  it('con appEnv ausente (undefined) se comporta como prod: subdominio manda, ?brand= ignorado', () => {
+    const key = resolveBrand({
+      hostname: `elektra.${BASE}`,
+      search: '?brand=shopinbaz',
+      isDev: false,
+      baseDomain: BASE,
+    });
+    expect(key).toBe('elektra');
+  });
+
+  it('con appEnv="prod" el apex cae a DEFAULT_BRAND_KEY (igual que hoy)', () => {
+    const key = resolveBrand({
+      hostname: BASE,
+      search: '?brand=elektra',
+      isDev: false,
+      appEnv: 'prod',
+      baseDomain: BASE,
+    });
+    expect(key).toBe(DEFAULT_BRAND_KEY);
+  });
+
+  it('con appEnv="prod" www.<base> cae a DEFAULT_BRAND_KEY (igual que hoy)', () => {
+    const key = resolveBrand({
+      hostname: `www.${BASE}`,
+      search: '?brand=elektra',
+      isDev: false,
+      appEnv: 'prod',
+      baseDomain: BASE,
+    });
+    expect(key).toBe(DEFAULT_BRAND_KEY);
+  });
+});
+
+describe('resolveBrand — local (ADR 18: isDev=true sigue aceptando ?brand=, con o sin appEnv)', () => {
+  it('en local ?brand= gana aunque appEnv="prod" (isDev tiene prioridad)', () => {
+    const key = resolveBrand({
+      hostname: 'localhost',
+      search: '?brand=elektra',
+      isDev: true,
+      appEnv: 'prod',
+      baseDomain: BASE,
+    });
+    expect(key).toBe('elektra');
+  });
+});
+
 describe('resolveBrand — invariante general', () => {
   it('nunca lanza y siempre devuelve un string no vacío', () => {
     const inputs = [

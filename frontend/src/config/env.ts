@@ -15,6 +15,8 @@ export interface Env {
   apiUrl: string;
   /** Marca por defecto en dev/tests; `undefined` si la var está ausente o vacía. */
   defaultBrand?: string;
+  /** Entorno de build (`VITE_APP_ENV`): `'dev'` en el deploy staging, `'prod'` por defecto. */
+  appEnv: 'dev' | 'prod';
 }
 
 /**
@@ -33,6 +35,7 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value ? value : undefined)),
+  VITE_APP_ENV: z.enum(['dev', 'prod']).default('prod'),
 });
 
 /** Resultado de `validateEnv`: convención "devuelve resultado" (no lanza). */
@@ -55,6 +58,7 @@ export function validateEnv(
     data: {
       apiUrl: parsed.data.VITE_API_URL,
       defaultBrand: parsed.data.VITE_DEFAULT_BRAND,
+      appEnv: parsed.data.VITE_APP_ENV,
     },
   };
 }
@@ -66,7 +70,7 @@ export function validateEnv(
  */
 export const env: Env = ((): Env => {
   const result = validateEnv();
-  return result.success ? result.data : { apiUrl: '' };
+  return result.success ? result.data : { apiUrl: '', appEnv: 'prod' };
 })();
 
 /** Flag dev/prod nativo de Vite, centralizado aquí como fuente única. */

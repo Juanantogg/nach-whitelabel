@@ -436,3 +436,119 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
   `pnpm audit` a nivel `low` (demasiado ruidoso: rompería el build por avisos
   informativos sin fix). Bloquear el push con el audit local (fricción sin valor:
   el CI ya es bloqueante).
+
+## 17. Infra de deploy: DNS en Namecheap, entornos dev/prod por rama, CI con Actions
+
+- **Contexto (2026-07-05):** al arrancar la feature `deploy` se verificó el terreno
+  real de DNS, que difiere de lo que asumió el ADR 9. `garcia3apps.com` usa el
+  **BasicDNS de Namecheap** (nameservers `dns1/dns2.registrar-servers.com`), y su
+  **apex ya sirve una web en producción en Firebase Hosting** (`199.36.158.100`). El
+  ADR 9 daba por hecho una *hosted zone en Route 53*; migrar el DNS a Route 53
+  obligaría a replicar todos los registros del apex (o la web principal caería) y
+  añade coste, sin beneficio para esta prueba. Además el usuario quiere **dos
+  entornos por rama** (`dev` y `prod`) y, si hay tiempo, **deploy automático con
+  GitHub Actions**. El repo hasta ahora no usaba ramas.
+- **Decisión — DNS (revisa el ADR 9):**
+  - El DNS **se queda en Namecheap BasicDNS**; NO se delega a Route 53. Solo se
+    **añaden registros de subdominio** (CNAME) apuntando a CloudFront (front) y App
+    Runner (back). El apex y la web de Firebase **no se tocan**.
+  - Subdominios **nombrados** (nunca wildcard), coherente con el ADR 9:
+    - `dev.garcia3apps.com` → front del entorno **dev**.
+    - `elektra.garcia3apps.com`, `shopinbaz.garcia3apps.com` → front **prod** (marca por host).
+    - `api-dev.garcia3apps.com` → backend dev; `api.garcia3apps.com` → backend prod.
+    - `brands.garcia3apps.com` → bucket S3 de config+assets de marca (ADR 3, 13).
+  - **Certificado ACM con DNS validation por CNAME en Namecheap**, en `us-east-1`
+    (requisito de CloudFront). SAN por subdominio, sin wildcard (ADR 9).
+- **Decisión — entornos por rama:**
+  - Rama **`dev`** → despliega el entorno **dev** (`dev.` + `api-dev.`).
+  - Rama **`main`** → despliega **prod** (`elektra.`/`shopinbaz.` + `api.`).
+  - Recursos **separados por entorno**: buckets, distribuciones CloudFront, servicios
+    App Runner, clusters Atlas (ya exigido por el ADR 11) y parámetros de Parameter
+    Store, con sufijo `-dev`/`-prod`.
+- **Decisión — orden de ejecución (incremental):** se monta **primero el entorno dev
+  completo a mano** y se valida de punta a punta (front en CloudFront + HTTPS + CORS
+  contra el back en App Runner). Solo entonces se **clona a prod** y se **automatiza
+  con GitHub Actions** (push/PR a `dev`→deploy dev, a `main`→deploy prod). La
+  automatización es el último tramo, no el primero: cada paso deja algo observable.
+- **Por qué:**
+  - Namecheap-solo elimina el riesgo sobre el apex en producción y el coste de la
+    hosted zone, y cumple igual el objetivo del ADR 9 (subdominio por marca con el
+    dominio real). El único precio es que los registros DNS se tocan a mano en el
+    panel de Namecheap (no hay API de DNS cómoda), aceptable para pocos subdominios.
+  - dev/prod por rama es la práctica estándar y demuestra pipeline real; separar
+    recursos por entorno evita que un deploy de dev pise prod.
+  - Construir dev primero valida toda la cadena (ACM/CORS/mixed-content, el riesgo
+    vigilado del ADR 9) con un solo entorno antes de duplicar esfuerzo.
+- **Descartado:** delegar el DNS a Route 53 (riesgo sobre el apex de Firebase +
+  coste, sin beneficio); wildcard `*.garcia3apps.com` (ya descartado en ADR 9:
+  interfiere con el apex y otros usos); montar dev y prod a la vez (más superficie de
+  error antes de validar un entorno); empezar por la automatización de CI (frágil de
+  depurar sin un entorno ya funcionando a mano).
+
+## 18. `?brand=` en el deploy dev vía `VITE_APP_ENV` (staging ≠ prod)
+
+- **Contexto (2026-07-05):** al montar el entorno `dev` (`dev.garcia3apps.com`, feature
+  `deploy`/ADR 17) surge que ese entorno es un **build de producción** (`import.meta.env.DEV
+  === false`), así que `resolveBrand` (ADR 5/12) resuelve la marca **solo por subdominio**:
+  `dev.garcia3apps.com` → key `dev` → inexistente → `default`, y `?brand=elektra` se
+  **ignora**. En local sí se puede previsualizar marcas con `?brand=`, pero en el deploy
+  dev no, que es justo donde el evaluador querría alternar marcas sin subdominios reales.
+  El ADR 5 descartó `?brand=` **en producción** a propósito (no forzar marca por URL en el
+  entorno real), pero NO contempló un entorno intermedio de staging.
+- **Decisión:** introducir una variable de build **`VITE_APP_ENV`** con valores
+  `dev` | `prod` (default `prod` si ausente), inyectada por el pipeline según la rama
+  (rama `dev` → `dev`, `main` → `prod`). `resolveBrand` acepta `?brand=` cuando
+  **`isDev === true` O `appEnv === 'dev'`**; en prod (`appEnv==='prod'`) sigue
+  **solo-subdominio**, exactamente como hoy. Se añade `appEnv` a `ResolveBrandInput`
+  (inyectado, la función sigue pura) y `main.tsx` lo lee de `import.meta.env.VITE_APP_ENV`.
+  Los tres entornos quedan:
+  - **local** (`isDev`): `?brand=` > `VITE_DEFAULT_BRAND` > default.
+  - **deploy dev** (`appEnv==='dev'`): `?brand=` > `VITE_DEFAULT_BRAND` > default.
+  - **prod** (`appEnv==='prod'`): subdominio; `?brand=` ignorado.
+- **Por qué:** dev es staging, no producción — forzar la marca por URL ahí es deseable
+  (previsualizar sin subdominios reales), mientras que prod conserva la garantía del ADR 5
+  (URLs limpias, sin forzar marca por query). Un flag de build mantiene un solo
+  código-fuente y decide el comportamiento por entorno; la función sigue pura y testeable
+  (el flag entra inyectado, como `isDev`). No revisa el ADR 5, lo **extiende** con el caso
+  que no cubría.
+- **Descartado:**
+  - **`?brand=` en todos los deploys (precedencia sobre subdominio):** contradice el ADR 5
+    (en `elektra.garcia3apps.com` alguien forzaría `?brand=shopinbaz`).
+  - **Subdominios de marca reales en dev (`elektra-dev.`, `shopinbaz-dev.`):** más fiel a
+    prod pero infla CNAMEs, SANs del certificado y distribuciones/config de CloudFront por
+    cada marca, sin aportar sobre `?brand=` para el objetivo (previsualizar marcas en dev).
+  - **Derivar el entorno del hostname en runtime** (`if hostname startsWith 'dev.'`):
+    acopla la lógica de marca al esquema DNS y no cubre el caso local; un flag de build es
+    explícito y desacoplado.
+
+## 19. `loadBrand` sin header `Accept` para evitar el preflight CORS contra S3/CloudFront
+
+- **Contexto (2026-07-05):** con el deploy dev funcionando y el bucket de marcas ya
+  servido por CloudFront (`brands.garcia3apps.com`, ADR 13/17), el front en
+  `dev.garcia3apps.com` fallaba al cargar `elektra.json` con **CORS: "No
+  'Access-Control-Allow-Origin' header is present"**. La causa NO era la config CORS de
+  CloudFront (que sí devuelve `access-control-allow-origin: *` en el GET, variando por
+  `Origin`), sino que `fetchFromS3` en `loadBrand.ts` mandaba
+  `headers: { Accept: 'application/json' }`. Un `Accept` con valor no-estándar convierte
+  el fetch cross-origin en una petición **no-simple**, disparando un **preflight
+  `OPTIONS`**. El origen es un bucket S3 privado con OAC que **no maneja `OPTIONS`**, así
+  que el preflight devolvía **403 `Error from cloudfront`** y el navegador abortaba antes
+  del GET. Verificado por curl: `OPTIONS` → 403; `GET` simple con `Origin` → 200 +
+  `access-control-allow-origin: *`.
+- **Decisión:** **eliminar el header `Accept: 'application/json'`** del fetch de
+  `fetchFromS3`. Sin headers no-estándar, la petición es una **CORS "simple"** (GET sin
+  headers que fuercen preflight) → no hay `OPTIONS`, solo el GET, que ya trae CORS. El
+  header no aportaba nada: S3 ignora `Accept` y sirve el objeto tal cual; el código ya
+  hace `res.json()`.
+- **Por qué:** arregla el problema con un cambio mínimo en el front, sin añadir
+  complejidad de infra (no hay que hacer que CloudFront/S3 respondan `OPTIONS`). Mantener
+  el fetch como petición simple es además lo correcto para servir assets estáticos
+  públicos desde un CDN.
+- **Descartado:**
+  - **Manejar el preflight `OPTIONS` en CloudFront** (CloudFront Function o CORS config de
+    S3 que responda OPTIONS): más piezas de infra para habilitar un preflight que no hace
+    falta si la petición es simple. Complejidad sin beneficio.
+  - **Poner CORS config en el bucket S3:** irrelevante con OAC — el navegador habla con
+    CloudFront, no con S3 directo; el CORS lo pone la ResponseHeadersPolicy de CloudFront.
+  - **Dejar el `Accept` y añadir `OPTIONS` a AllowedMethods de la distribución:** el
+    OPTIONS seguiría yendo al origen S3 (403); no lo resuelve.

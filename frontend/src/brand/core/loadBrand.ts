@@ -25,6 +25,11 @@ const DEFAULT_SEEDS: Record<string, unknown> = import.meta.env.DEV ? DEV_SEEDS :
  * Intenta traer el `<key>.json` de S3 y validarlo con Zod. Devuelve la
  * `BrandConfig` parseada, o `null` ante CUALQUIER fallo de S3 (rechazo de
  * red/CORS, `!res.ok`/404, JSON malformado o error de Zod). Nunca lanza.
+ *
+ * El fetch es un GET "simple", con un init vacío (sin headers no-estándar como
+ * `Accept`): así no dispara un preflight `OPTIONS` que el origen S3 privado con
+ * OAC rechazaría con 403 (ADR 19). S3 ignora `Accept` de todos modos; el parseo
+ * lo hace `res.json()`.
  */
 async function fetchFromS3(
   key: BrandKey,
@@ -32,9 +37,7 @@ async function fetchFromS3(
   s3BaseUrl: string,
 ): Promise<BrandConfig | null> {
   try {
-    const res = await fetchFn(`${s3BaseUrl}/${key}.json`, {
-      headers: { Accept: 'application/json' },
-    });
+    const res = await fetchFn(`${s3BaseUrl}/${key}.json`, {});
     if (!res.ok) {
       return null;
     }
