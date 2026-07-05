@@ -291,6 +291,10 @@ ver punteros §1 y §3-5):
 - [x] Esquema de cifrado decidido: híbrido asimétrico (sin secreto en el front)
 - [x] `VITE_CRYPTO_SECRET` eliminado de `.env.example` y `CLAUDE.md`
 - [x] Cifrado híbrido implementado (clave pública en front, privada solo en back) — `crypto_hybrid` done
+- [x] Supply-chain (instalación): pnpm 11 endurecido — `minimumReleaseAge` 24h, `allowBuilds {}`, `blockExoticSubdeps` (ADR 16)
+- [x] Supply-chain (deps vulnerables): `pnpm audit` bloqueante en CI + aviso en pre-push (ADR 16.a)
+- [x] Supply-chain (pipeline): CI con `permissions: contents: read` + Actions pinneadas por SHA (ADR 16.a)
+- [x] Mantenimiento: Dependabot (npm + github-actions), PRs agrupados (ADR 16.a)
 
 Pendientes con óptica de seguridad (**el qué en el backlog**):
 

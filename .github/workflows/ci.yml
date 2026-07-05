@@ -6,18 +6,29 @@ on:
   pull_request:
     branches: [main]
 
+# Permisos mínimos por defecto para el GITHUB_TOKEN de todo el workflow: solo
+# lectura del repo. Mitiga que una Action comprometida use el token para escribir
+# en el repo o exfiltrar (vector del ataque tj-actions/changed-files, 2025). Cada
+# job que necesite más los eleva explícitamente. Ver docs/decisiones.md ADR 16.
+permissions:
+  contents: read
+
+# Las GitHub Actions se fijan por SHA (no por tag): una tag como @v4 puede
+# re-apuntarse a código malicioso si comprometen al maintainer; un SHA es
+# inmutable. El comentario indica la versión legible que representa cada SHA.
+
 jobs:
   secret-scan:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           # Historial completo para escanear todos los commits del push/PR.
           fetch-depth: 0
 
       - name: Gitleaks (detección de secretos)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -25,19 +36,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Auditoría de vulnerabilidades conocidas (CVE) en el árbol de dependencias.
+      # Falla el build ante advisories de nivel moderate o superior — defensa
+      # contra usar una versión con vulnerabilidad publicada.
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=moderate
 
       - name: Format check
         run: pnpm format:check

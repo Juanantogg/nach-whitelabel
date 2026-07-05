@@ -1,4 +1,10 @@
 # Red de seguridad antes de push: el código debe compilar y los tests pasar.
 # (Los `.only` en tests se bloquean antes, en el pre-commit, vía la regla
 #  ESLint vitest/no-focused-tests que corre lint-staged.)
-pnpm typecheck && pnpm -r test
+pnpm typecheck && pnpm -r test || exit 1
+
+# Auditoría de vulnerabilidades conocidas (CVE) en las dependencias. AVISA pero
+# NO bloquea el push: un CVE transitivo sin patch disponible no debe impedirte
+# subir, y el CI (audit --audit-level=moderate) es la red dura y bloqueante.
+pnpm audit --audit-level=moderate || \
+  echo "⚠️  pnpm audit encontró vulnerabilidades. Revísalas; el CI las hará bloqueantes."

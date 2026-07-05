@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Aplicación white-label: captura de nombre (input + voz), cifrado end-to-end y número consecutivo. Prueba técnica Nach / Upax.",
-  "packageManager": "pnpm@11.0.0",
+  "packageManager": "pnpm@11.10.0",
   "engines": {
     "node": ">=20"
   },

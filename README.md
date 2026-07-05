@@ -21,15 +21,33 @@ configuración.
 ## Requisitos
 
 - **Node.js** ≥ 20
-- **pnpm** ≥ 11 (`corepack enable` o `npm i -g pnpm`)
+- **pnpm** `11.10.0` — no hace falta instalarlo aparte: el campo `packageManager`
+  del `package.json` lo fija, y **Corepack** (incluido en Node) lo activa con la
+  versión exacta. Si no usas Corepack, `npm i -g pnpm` también sirve.
+
+```bash
+corepack enable              # activa la versión de pnpm fijada por el repo
+```
 
 ## Puesta en marcha
 
 ```bash
-pnpm install                 # instala front + back
+pnpm install                 # instala front + back (usa el lockfile commiteado)
 cp .env.example .env         # configura variables (Mongo URI, clave de cifrado)
 pnpm dev                     # levanta frontend y backend en paralelo
 ```
+
+> **Para ejecutar en local** necesitas `MONGODB_URI` y `CRYPTO_PRIVATE_KEY` en tu
+> `.env` (el backend hace *fail-fast* y no arranca sin ellas, por diseño de
+> seguridad). Los envío en el correo de entrega para que solo tengas que pegarlos;
+> no viajan en el repo. Si prefieres generar tu propio par de claves, el
+> `.env.example` incluye los comandos `openssl`.
+
+> **Seguridad de dependencias:** el repo endurece pnpm contra ataques a la cadena
+> de suministro de npm (ver [ADR 16](docs/decisiones.md)). Instalar desde el
+> lockfile commiteado (lo anterior) funciona sin fricción. Solo si **añades una
+> dependencia recién publicada** (< 24 h) verás la cuarentena `minimumReleaseAge`;
+> es intencional — espera un día o exclúyela puntualmente.
 
 - Frontend: http://localhost:5173
 - Backend: http://localhost:3001 (health-check en `/health`)

@@ -351,3 +351,88 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
   5xx espurios y ruido de logs por tráfico legítimo de otros orígenes); `asyncHandler`
   wrapper (innecesario en Express 5); mantener `console.*` (no estructurado, choca con
   la acceptance de logging).
+
+## 16. Endurecimiento de pnpm contra ataques a la cadena de suministro de npm
+
+- **Contexto (2026-07-04):** 2025-2026 concentró una oleada de ataques de
+  supply-chain a npm (maintainers comprometidos por phishing publicando versiones
+  maliciosas de paquetes legítimos con millones de descargas; worms auto-propagados
+  tipo *Shai-Hulud*; payloads que se ejecutan en `postinstall`). El vector típico:
+  una versión comprometida se publica y se instala en las **primeras horas**, antes
+  de que npm la despublique; el daño corre en un script de instalación. El repo no
+  tenía ninguna defensa de instalación configurada (sin `.npmrc`, sin settings de
+  seguridad de pnpm), pese a usar pnpm 11 que ya trae mitigaciones.
+- **Decisión:** fijar **explícita y versionadamente** en `pnpm-workspace.yaml` las
+  defensas de supply-chain de pnpm 11 (aunque ya sean default-on, para que no
+  dependan de defaults ni se pierdan en un bump), y **subir el `packageManager` a
+  `pnpm@11.10.0`** (última estable):
+  1. **`minimumReleaseAge: 1440`** — cuarentena de 24 h: no se resuelven versiones
+     publicadas hace menos de un día. Saca al proyecto de la ventana crítica en la
+     que vive un paquete comprometido antes de ser detectado/despublicado. Es la
+     mitigación que más mueve la aguja.
+  2. **`allowBuilds: {}`** (map vacío) + `strictDepBuilds` (default true) — ningún
+     paquete puede ejecutar scripts de build/`postinstall`; una dep nueva con
+     script hace **fallar** el install en vez de ejecutarlo en silencio. Verificado
+     que hoy **ninguna** dependencia del repo tiene scripts de instalación, así que
+     el bloqueo total no rompe nada.
+  3. **`blockExoticSubdeps: true`** — bloquea subdependencias con specs exóticos
+     (git/url/tarball) en el árbol transitivo, vector de inyección.
+- **Por qué `pnpm@11.10.0` y no quedarse en 11.0.0:** las 4 defensas base ya están
+  en 11.0.0, pero **11.0.4** hace que fijar `minimumReleaseAge` active el modo
+  *estricto* (`minimumReleaseAgeStrict`: falla en vez de auto-excluir versiones
+  inmaduras en silencio) y **11.1.3** añade la revalidación del lockfile contra la
+  cuarentena antes de bajar tarballs (cierra el hueco de lockfiles resueltos en otra
+  máquina/CI comprometida). 11.10.0 es la última estable e incluye ambas + fixes.
+- **Compatibilidad con el evaluador (no usa pnpm):** el campo `packageManager` +
+  **Corepack** (incluido en Node ≥ 16) resuelven la versión exacta de pnpm sin
+  instalación manual (`corepack enable && pnpm install`); fallback `npm i -g pnpm`.
+  El endurecimiento es config de **instalación local/CI**, NO afecta al runtime ni
+  a la app desplegada: si el evaluador solo abre la URL de producción, nunca toca
+  pnpm. Instalar desde el **lockfile commiteado** (`--frozen-lockfile`, verificado)
+  no dispara la cuarentena — esta solo aplica al **resolver** versiones nuevas.
+  Documentado en el README (sección Requisitos).
+- **Descartado:** `.npmrc` con settings de pnpm (en pnpm 11 `.npmrc` es solo
+  registry/auth; las settings pnpm migraron a `pnpm-workspace.yaml` — ponerlas en
+  `.npmrc` daría falsa protección); `onlyBuiltDependencies`/`neverBuiltDependencies`
+  (eliminadas en pnpm 11, reemplazadas por `allowBuilds`; un config viejo con esas
+  claves sería un no-op silencioso); `allowBuilds: []` como array (sintaxis vieja;
+  en 11 es map); `dangerouslyAllowAllBuilds` (ejecutaría todos los scripts, lo
+  contrario de lo buscado); `frozen-lockfile=true` global (rompería el flujo de dev
+  al añadir deps; ya es auto-true en CI, y en local se usa vía flag).
+
+### 16.a — Defensa en profundidad: auditoría, CI endurecido y Dependabot (2026-07-04)
+
+- **Contexto:** el endurecimiento de pnpm (arriba) cierra la puerta de la
+  **instalación**, pero los ataques masivos a npm entran por más sitios: (a) usar
+  una dependencia con un CVE ya publicado; (b) una **GitHub Action comprometida**
+  que roba el `GITHUB_TOKEN`/secretos del pipeline (vector real del ataque
+  *tj-actions/changed-files*, 2025); (c) actualizaciones ciegas. El repo ya tenía
+  gitleaks (pre-commit + CI) contra filtración de secretos y `--frozen-lockfile`
+  en CI, pero nada contra (a), (b) ni (c).
+- **Decisión — cuatro capas añadidas:**
+  1. **`pnpm audit --audit-level=moderate` en CI** (bloqueante): falla el build
+     ante advisories conocidos de nivel moderate o superior. Defensa directa
+     contra depender de una versión con vulnerabilidad publicada.
+  2. **`pnpm audit` en el hook `pre-push`** (avisa, NO bloquea): red local
+     temprana. No bloquea porque un CVE transitivo sin patch no debe impedir el
+     push; el CI es la red dura. Mismo patrón que gitleaks en `pre-commit`.
+  3. **CI endurecido:** `permissions: contents: read` a nivel workflow (el
+     `GITHUB_TOKEN` deja de heredar permisos de escritura amplios), y todas las
+     **GitHub Actions pinneadas por SHA de commit** en vez de por tag (`@v4`). Una
+     tag puede re-apuntarse a código malicioso si comprometen al maintainer; un
+     SHA es inmutable. El comentario junto a cada SHA anota la versión legible.
+  4. **Dependabot** (`.github/dependabot.yml`) para dos ecosistemas — `npm` y
+     `github-actions` — con PRs semanales agrupados (minor+patch juntos, majors
+     sueltos). Mantiene deps y los propios SHA de las Actions al día sin
+     actualizaciones ciegas; se combina con `minimumReleaseAge` (la cuarentena
+     sigue aplicando a lo que Dependabot proponga).
+- **Por qué:** cubre las cuatro puertas de entrada (instalación, deps vulnerables,
+  pipeline, mantenimiento) con esfuerzo bajo y sin tocar código de producción. Al
+  momento de montarlo `pnpm audit` no reporta ninguna vulnerabilidad, así que las
+  capas bloqueantes arrancan en verde.
+- **Descartado (para esta prueba):** OpenSSF Scorecard, firma de commits
+  (GPG/sigstore), SLSA provenance, registry proxy privado (Verdaccio) — defensas
+  de organización grande que añaden ruido sin sumar en el criterio de evaluación.
+  `pnpm audit` a nivel `low` (demasiado ruidoso: rompería el build por avisos
+  informativos sin fix). Bloquear el push con el audit local (fricción sin valor:
+  el CI ya es bloqueante).

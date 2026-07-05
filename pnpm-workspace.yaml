@@ -1,3 +1,25 @@
 packages:
   - 'frontend'
   - 'backend'
+
+# --- Endurecimiento supply-chain (pnpm 11) ---
+# Defensa contra paquetes de npm comprometidos (maintainer con phishing, worms
+# tipo Shai-Hulud, postinstall maliciosos). Todas estas opciones ya son
+# default-on en pnpm 11, pero se fijan explícitas y versionadas para que la
+# protección no dependa de defaults ni se pierda en un bump futuro.
+# Detalle y fuentes: docs/decisiones.md (ADR 16) y docs/seguridad.md.
+
+# Cuarentena de 24h (1440 min): no se resuelven versiones publicadas hace menos
+# de un día, dando tiempo a la comunidad a detectar y despublicar una versión
+# comprometida antes de que entre en nuestro árbol de dependencias.
+minimumReleaseAge: 1440
+
+# Ningún paquete puede ejecutar scripts de build/postinstall. Map vacío = nadie
+# permitido; con strictDepBuilds (default true) una dep nueva con postinstall
+# hace FALLAR el install en vez de ejecutarlo en silencio. Hoy ninguna dep del
+# repo tiene scripts de instalación, así que el map vacío no rompe nada.
+allowBuilds: {}
+
+# Bloquea subdependencias con specs "exóticos" (git/url/tarball) en el árbol
+# transitivo — vector típico de inyección. Explícito aunque ya sea el default.
+blockExoticSubdeps: true
