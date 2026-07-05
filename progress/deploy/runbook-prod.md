@@ -56,18 +56,61 @@ en dev/local. Se implementa vía TDD (tester→implementer→reviewer) como func
 
 ---
 
-## Pasos de infra prod (se irán rellenando)
+## Pasos de infra prod
 
-- [ ] Reemitir/emitir cert con SANs `api-elektra`, `api-shopinbaz` (+ validar en Namecheap)
-- [ ] `resolveApiUrl` (código, TDD) — ADR 20.a
-- [ ] Front prod: 1 bucket + 1 CloudFront con aliases `elektra.` + `shopinbaz.` (build `VITE_APP_ENV=prod`)
-- [ ] CNAMEs `elektra`, `shopinbaz` → CloudFront front prod
-- [ ] Atlas: 2 clusters nuevos (elektra, shopinbaz) — usuario
-- [ ] Secretos `/nach/elektra/*` y `/nach/shopinbaz/*` en Parameter Store — usuario
-- [ ] Instance roles IAM por marca (o uno con acceso a ambos namespaces)
+- [x] `resolveApiUrl` + integración en env (código, TDD, ADR 20.a) — commit `8925fc6`
+- [x] Cert prod (opción B): `api-elektra` + `api-shopinbaz`
+- [x] Front prod: bucket + CloudFront con 2 aliases + build+subida
+- [ ] CNAMEs de validación del cert prod (2, cortos) — usuario
+- [ ] CNAMEs `elektra`, `shopinbaz` → CloudFront front prod — usuario
+- [ ] Secretos `/nach/elektra/*` y `/nach/shopinbaz/*` (2 Atlas ya creados por el usuario)
+
+> **Atlas prod:** el usuario creó **3 PROYECTOS Atlas separados** (`elektra`, `nach-whitelabel`=dev,
+> `shopinbaz`), 1 cluster M0 cada uno (todos `Cluster0` por el free tier). Aislamiento mejor
+> aún que el ADR 20 (separa usuarios de BD, Network Access y billing por proyecto).
+> **Nombre de la BD en la URI (path):** usar `/elektra` y `/shopinbaz` (NO `/nach`) — el nombre
+> de BD es libre y no está hardcodeado en el backend (verificado: los modelos fijan colecciones
+> `records`/`counters`, la BD sale del path de la URI). Auto-documenta qué BD es de qué marca.
+> Ej: `mongodb+srv://...@cluster0.xxx.mongodb.net/elektra?retryWrites=true&w=majority`.
+> Los NAMESPACES de Parameter Store sí se llaman `/nach/elektra/*` y `/nach/shopinbaz/*` (es el
+> prefijo del proyecto, no el nombre de la BD; no confundir).
+- [x] Instance roles IAM por marca (aislados: cada uno solo a su namespace SSM)
 - [ ] 2 App Runner (`nach-elektra-prod`, `nach-shopinbaz-prod`) desde rama `main`
 - [ ] CloudFront delante de cada backend (`api-elektra.`, `api-shopinbaz.`) + CNAMEs
 - [ ] Prueba E2E por marca (aislamiento: elektra no ve datos de shopinbaz)
+
+### P1 — Cert prod (opción B)
+```bash
+aws acm request-certificate --region us-east-1 \
+  --domain-name api-elektra.garcia3apps.com \
+  --subject-alternative-names api-shopinbaz.garcia3apps.com \
+  --validation-method DNS
+```
+**Cert ARN prod:** `arn:aws:acm:us-east-1:026225422252:certificate/f9f26036-5615-4255-aee3-72e6f7f76534`
+**CNAME de validación (Namecheap, cortos):**
+| Host | Value |
+|---|---|
+| `_2f9526d77350fd502154a3dc841b5f7e.api-elektra` | `_951fc9dc6a094ce4ee923e08e9b53c22.jkddzztszm.acm-validations.aws` |
+| `_8519cbfbf7b6a75cd96d9a26798a2c37.api-shopinbaz` | `_ccea35750e210f52368c0aaf6ee4df07.jkddzztszm.acm-validations.aws` |
+
+### P2 — Front prod (1 CloudFront, 2 aliases; cert de dev que ya cubre elektra./shopinbaz.)
+```bash
+# Bucket NEUTRO (sirve ambas marcas, no es de una): prod-front.garcia3apps.com
+aws s3api create-bucket --bucket prod-front.garcia3apps.com --region us-east-1
+aws s3api put-public-access-block --bucket prod-front.garcia3apps.com --public-access-block-configuration ...=true
+# CloudFront con Aliases=[elektra., shopinbaz.], cert 8872b2af (existente), SPA 403/404→index.html
+aws cloudfront create-distribution --distribution-config file://scratchpad/cf-prod-front.json
+#   -> Id EGG76TCOPNRIB, domain d2w9hi3u2vufmj.cloudfront.net
+aws s3api put-bucket-policy --bucket prod-front.garcia3apps.com --policy file://scratchpad/bucket-policy-prod-front.json
+# Build PROD: SIN VITE_API_URL (deriva el backend por host, ADR 20.a); solo VITE_APP_ENV=prod
+cd frontend && VITE_APP_ENV=prod pnpm build
+aws s3 sync dist/ s3://prod-front.garcia3apps.com/ --delete --exclude index.html --cache-control "public,max-age=31536000,immutable"
+aws s3 cp dist/index.html s3://prod-front.garcia3apps.com/index.html --cache-control "no-cache,no-store,must-revalidate" --content-type text/html
+```
+- **CloudFront front prod:** `EGG76TCOPNRIB` → `d2w9hi3u2vufmj.cloudfront.net`
+- Bundle verificado: NO hornea ninguna URL de API (lleva la plantilla `api-${key}` que
+  resuelve por host); `api-dev` NO aparece como string completo. ✅
+- **CNAMEs de front (usuario):** `elektra` y `shopinbaz` → `d2w9hi3u2vufmj.cloudfront.net`
 
 ## Notas de divergencia con dev
 
