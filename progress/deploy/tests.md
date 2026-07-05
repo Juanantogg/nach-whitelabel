@@ -170,3 +170,234 @@ El fallo es por la razón correcta: hoy `fetchFromS3` sí manda
 (bloque "fetch de S3 es una petición CORS «simple» (ADR 19)"). Listo para el
 implementer: la fix es eliminar el `headers: { Accept: 'application/json' }` del
 fetch de `fetchFromS3`.
+
+---
+
+# Tests (RED) — ADR 20.a: el front deriva el backend del host en runtime (`api-<key>`)
+
+Fase RED del TDD para el ADR 20.a (`docs/decisiones.md` §20.a). Fuente de verdad:
+en **producción** el front deja de hornear una URL de API fija por bundle y
+**deriva** el backend del host con la plantilla determinista
+`https://api-<key>.garcia3apps.com`, donde `<key>` es la MISMA key de marca que
+`resolveBrand` extrae del subdominio. En **dev/local** se mantiene `VITE_API_URL`
+(build-time), como hoy.
+
+## Función bajo prueba (nueva, aún NO implementada)
+
+Firma propuesta — **posicional**, tal como la nombra el ADR
+(`resolveApiUrl(hostname, appEnv, baseDomain, viteApiUrl)`):
+
+```ts
+resolveApiUrl(
+  hostname: string,        // window.location.hostname
+  appEnv: 'dev' | 'prod',  // env.appEnv (VITE_APP_ENV)
+  baseDomain: string,      // BASE_DOMAIN, p.ej. 'garcia3apps.com'
+  viteApiUrl: string,      // env.apiUrl (fallback horneado de dev/local)
+): string
+```
+
+Análoga a `resolveBrand`: PURA, dependencias inyectadas, nunca lee
+`window`/`import.meta`, nunca lanza, siempre devuelve `string`. Sin condicionales
+por marca concreta: es una plantilla. El contrato de `fetchPublicKey`/`apiFetch`
+NO cambia — se les seguirá inyectando `apiUrl` (ahora resuelto por esta función).
+
+## Archivo
+
+`frontend/src/api/resolveApiUrl.test.ts` (nuevo). No se creó ni tocó
+`resolveApiUrl.ts` ni ningún otro código de producción.
+
+## Decisión sobre el FALLBACK (apex / www / host ajeno en prod)
+
+**Opción elegida (segura): devolver `viteApiUrl` tal cual, NO derivar
+`api-default.garcia3apps.com`.**
+
+Cuando el host en prod NO es un subdominio de marca válido (apex, `www.<base>`,
+host que no termina en `baseDomain`, subdominio anidado, o vacío) no sabemos a
+qué marca pertenece la página. Inventar `api-<algo>` correría el riesgo de
+apuntar a un backend equivocado o inexistente — justo el cruce de datos entre
+empresas que el ADR 20.a busca evitar. Por eso el fallback es el valor horneado
+conocido (`viteApiUrl`), y la derivación por plantilla se activa SOLO cuando el
+host es físicamente un subdominio de marca real. Esto reusa exactamente la
+frontera que `resolveBrand` marca entre "subdominio de marca" y "apex/sin marca".
+
+## Casos cubiertos (criterio → test)
+
+Camino feliz (prod deriva):
+- `elektra.<base>` → `https://api-elektra.garcia3apps.com`.
+- `shopinbaz.<base>` → `https://api-shopinbaz.garcia3apps.com`.
+- key **arbitraria** `nuevamarca.<base>` → `https://api-nuevamarca.garcia3apps.com`
+  (prueba de que NO hay lógica hardcodeada por marca: es una plantilla).
+- key con guion bajo `banco_azteca.<base>` → `https://api-banco_azteca...`
+  (key abierta, S3 manda).
+
+Fallback seguro en prod (borde):
+- APEX (`hostname === baseDomain`) → `viteApiUrl` (y NO contiene `api-default`
+  ni `api-garcia3apps`).
+- `www.<base>` → `viteApiUrl` (no `api-www`).
+- host que no termina en `baseDomain` (`elektra.otrodominio.com`) → `viteApiUrl`
+  (guard anti-cruce: no deriva `api-elektra` de un dominio ajeno).
+- subdominio anidado (`a.b.<base>`, dos labels extra) → `viteApiUrl`.
+- hostname vacío → `viteApiUrl`.
+
+Dev/local (nunca deriva por host):
+- dev + subdominio de marca (`elektra.<base>`) → `viteApiUrl` (backend único
+  `api-dev`; NO deriva `api-elektra`).
+- dev + apex → `viteApiUrl`.
+- local (`localhost`) con `viteApiUrl` vacío → `''` (relativo/vacío legítimo).
+- local con backend en otro puerto (`http://localhost:3000`) → sin tocarlo.
+
+Invariante:
+- nunca lanza y siempre devuelve `string` sobre una batería de entradas mixtas.
+
+## Veredicto
+
+**RED** — la suite falla al **resolver el import** `./resolveApiUrl` (el módulo
+no existe todavía), la razón correcta de fallo en fase RED:
+
+```
+FAIL  src/api/resolveApiUrl.test.ts [ src/api/resolveApiUrl.test.ts ]
+Error: Failed to resolve import "./resolveApiUrl" from
+  "src/api/resolveApiUrl.test.ts". Does the file exist?
+  2  |  import { resolveApiUrl } from "./resolveApiUrl";
+     |                                 ^
+Test Files  1 failed (1)
+     Tests  no tests
+```
+
+Comando: `pnpm --filter @nach/frontend test resolveApiUrl`.
+
+Listo para el implementer: crear `frontend/src/api/resolveApiUrl.ts` con la
+función pura descrita (plantilla `https://api-<key>.<baseDomain>` en prod cuando
+el host es un subdominio de marca de un único label; `viteApiUrl` en cualquier
+otro caso y en dev/local) y cablearla en `config/env` para alimentar `apiUrl` a
+`fetchPublicKey`/`apiFetch` sin cambiar sus contratos.
+
+---
+
+# Tests (RED) — ADR 20.a INTEGRACIÓN: `env.apiUrl` derivado por host (cableado)
+
+Fase RED del TDD para el **cableado** del ADR 20.a. La función pura
+`resolveApiUrl(hostname, appEnv, baseDomain, viteApiUrl)` ya existe y pasa
+(`frontend/src/api/resolveApiUrl.ts` + su test, GREEN). Esta iteración cubre su
+**integración en `config/env`**: `env.apiUrl` deja de ser `VITE_API_URL` a secas y
+pasa a ser el resultado de
+
+```
+resolveApiUrl(window.location.hostname, appEnv, BASE_DOMAIN, VITE_API_URL)
+```
+
+Decisión de integración confirmada con el usuario:
+- **prod + host de marca** (`elektra.<base>`) → `env.apiUrl = https://api-elektra.<base>`.
+- **prod + host sin marca** (apex / `www` / host ajeno) → `env.apiUrl = VITE_API_URL` (fallback).
+- **dev/local** → `env.apiUrl = VITE_API_URL` (como hoy, sin derivar por host).
+- `client.ts` y `fetchPublicKey.ts` **NO cambian** (siguen leyendo `env.apiUrl`).
+
+## Archivo
+
+`frontend/src/config/env.test.ts` (extendido con un `describe` nuevo de
+integración; NO se tocó `env.ts` ni ningún código de producción).
+
+## Diseño de test / mock del hostname (propuesta al implementer)
+
+Se elige el enfoque **puro-inyectable**, espejo exacto del que ya usa `validateEnv`
+para el `source` (`import.meta.env` inyectable). En vez de stubear el `window`
+global y re-importar el módulo `env` (frágil: `env` se congela al importarse), se
+propone que **`validateEnv` gane un segundo parámetro inyectable `hostname`**:
+
+```ts
+validateEnv(
+  source: Record<string, string | undefined> = import.meta.env,
+  hostname: string = window.location.hostname,
+): EnvResult
+```
+
+y que, tras parsear el schema, calcule:
+
+```ts
+apiUrl: resolveApiUrl(hostname, parsed.VITE_APP_ENV, BASE_DOMAIN, parsed.VITE_API_URL)
+```
+
+El objeto `env` lee `window.location.hostname` **en el borde** y se lo pasa a
+`validateEnv` (mismo patrón con que `main.tsx` inyecta `window.location.hostname`
+a `resolveBrand`). Ventajas: el cableado se prueba pasando el hostname como
+argumento — sin `vi.stubGlobal('window', …)`, sin re-import del módulo, sin
+depender del `location` de jsdom. `resolveApiUrl` sigue siendo la única fuente de
+la plantilla; `env` solo la cablea con `BASE_DOMAIN` y el host real.
+
+## Casos cubiertos (criterio → test)
+
+Camino feliz (prod deriva) — **RED real**:
+
+| Test | hostname | apiUrl esperado |
+|---|---|---|
+| prod + host de marca (elektra) | `elektra.<base>` | `https://api-elektra.garcia3apps.com` |
+| prod + host de marca (shopinbaz) | `shopinbaz.<base>` | `https://api-shopinbaz.garcia3apps.com` |
+| prod + marca arbitraria (plantilla, no if por marca) | `nuevamarca.<base>` | `https://api-nuevamarca.garcia3apps.com` |
+| appEnv **ausente** ⇒ default `prod` ⇒ deriva | `elektra.<base>`, sin `VITE_APP_ENV` | `https://api-elektra.garcia3apps.com` |
+
+Fallback/borde y dev — **fijan la regresión** (hoy ya coinciden porque `apiUrl`
+es `VITE_API_URL`; deben SEGUIR coincidiendo tras el cableado):
+
+| Test | hostname / env | apiUrl esperado |
+|---|---|---|
+| prod + APEX (no inventa `api-default`) | `<base>`, prod | `VITE_API_URL` |
+| prod + `www.<base>` | `www.<base>`, prod | `VITE_API_URL` |
+| prod + host ajeno (guard anti-cruce) | `elektra.otrodominio.com`, prod | `VITE_API_URL` (y `!= api-elektra.<base>`) |
+| dev + host de marca (backend único `api-dev`) | `elektra.<base>`, dev | `VITE_API_URL` (y sin `api-elektra`) |
+| dev + localhost (relativo/vacío legítimo) | `localhost`, dev, `VITE_API_URL=''` | `''` |
+| prod + fallback con trailing slash normalizado | `<base>`, `VITE_API_URL='…/'` | `https://api.garcia3apps.com` |
+
+También se anotó el test viejo `se hidrata del entorno vía import.meta.env` con un
+comentario aclarando que en tests `VITE_APP_ENV` no es `'prod'`, por lo que su
+aserción (`apiUrl === VITE_API_URL sin slash`) sigue siendo el comportamiento dev
+correcto — **no se debilitó** ninguna cobertura previa.
+
+## Evidencia RED
+
+### 1. Runtime (`pnpm --filter @nach/frontend test env`)
+
+```
+ ❯ src/config/env.test.ts (19 tests | 4 failed)
+   × prod + host de marca (elektra.<base>) → apiUrl = https://api-elektra.<base>
+   × prod + host de marca (shopinbaz.<base>) → apiUrl = https://api-shopinbaz.<base>
+   × prod + host de marca arbitraria (no hay lógica por marca: es plantilla)
+   × appEnv ausente se comporta como prod (default del schema) y deriva por host
+
+AssertionError: expected 'https://api.garcia3apps.com'
+  to be 'https://api-elektra.garcia3apps.com'
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 15 passed (19)
+```
+
+Los 4 fallos son por la razón correcta: hoy `apiUrl` es siempre `VITE_API_URL` y
+**no deriva por host**. Los 9 tests originales de `env` siguen verdes (dentro de
+los 15 que pasan): sin regresión colateral. Los casos de fallback/dev pasan ya
+porque su comportamiento esperado coincide con el actual — quedan como red de
+regresión de que el implementer no rompa el fallback al cablear.
+
+### 2. Tipos (`pnpm --filter @nach/frontend typecheck`)
+
+```
+src/config/env.test.ts: error TS2554: Expected 0-1 arguments, but got 2.  (×10)
+```
+
+Confirma que `validateEnv` aún **no acepta el segundo argumento `hostname`** — guía
+directa para el implementer: añadir `hostname: string = window.location.hostname`
+a la firma y cablear `resolveApiUrl` dentro de `validateEnv` con `BASE_DOMAIN`.
+
+## Veredicto
+
+**RED** — 4 tests fallando en
+`frontend/src/config/env.test.ts` (bloque "apiUrl derivado por host, ADR 20.a")
+más error de tipos `TS2554` por el `hostname` inyectable ausente en la firma de
+`validateEnv`. Listo para el implementer.
+
+Guía de implementación (mínimo para GREEN, sin tocar `client.ts`/`fetchPublicKey.ts`):
+1. En `config/env.ts` importar `resolveApiUrl` (de `../api/resolveApiUrl`) y
+   `BASE_DOMAIN` (de `../brand/core/constants`).
+2. `validateEnv(source, hostname = window.location.hostname)`: tras `safeParse`,
+   `apiUrl: resolveApiUrl(hostname, parsed.data.VITE_APP_ENV, BASE_DOMAIN, parsed.data.VITE_API_URL)`.
+3. El objeto `env` invoca `validateEnv()` (que lee `window.location.hostname` en el
+   borde). Verificar que no hay import circular `api ↔ config` (resolveApiUrl solo
+   depende de `brandKeyFromHost`, no de `config/env`, así que no lo hay).
