@@ -320,6 +320,46 @@ Falta el **backend (App Runner)** para que el envío del nombre funcione end-to-
 
 ---
 
+## Paso 6 — Repo GitHub + flujo de ramas + fix de CI
+
+### 6.1 Repo y ramas (ADR 17)
+- Repo **público** `Juanantogg/nach-whitelabel` (creado por el usuario).
+- Remote SSH: `git@github.com:Juanantogg/nach-whitelabel.git`.
+- `main` (prod) avanzada por fast-forward hasta el trabajo actual; `dev` creada desde `main`.
+- Rama por defecto: `main`. Ambas ramas subidas.
+
+### 6.2 Fix de CI — `allowBuilds` bloqueaba esbuild
+Al subir, **todos los jobs de CI fallaban** en `pnpm install --frozen-lockfile`:
+`[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.28.1` → exit 1. Causa: el
+`allowBuilds: {}` del ADR 16 bloquea TODO build, y `esbuild` (bundler nativo transitivo de
+Vite/tsx) necesita su postinstall; con `strictDepBuilds` el bloqueo es un fallo, no un aviso.
+**Fix:** `allowBuilds: { esbuild: true }` en `pnpm-workspace.yaml` (resto sigue bloqueado;
+sintaxis de map verificada con docs pnpm 11). Validado en el CI real vía **PR #7 dev→main**
+(quality + secret-scan verdes), squash-merged. `dev` re-alineada a `main`.
+
+> **Nota CI/CD pendiente:** el workflow `.github/workflows/ci.yml` solo dispara en `main`
+> (push + PR). Para el flujo dev→prod hay que **añadir `dev` a los triggers** para que el CI
+> de calidad corra también en dev. Apuntado para los workflows de deploy.
+
+> **Minutos Actions:** repo PÚBLICO = gratis e ilimitado. Sin preocupación de coste.
+
+> **Dependabot:** activo, 6 PRs abiertos (fallaban por el mismo bug de esbuild; ya arreglado).
+> En pausa por decisión del usuario; se revisan/mergean más adelante.
+
+---
+
+## Paso 7 — Backend dev (App Runner + Atlas + Parameter Store) [EN CURSO]
+
+- **Fuente:** App Runner desde el repo GitHub (rama `dev`), vía `apprunner.yaml` (runtime
+  gestionado, no Docker). Investigación del patrón pnpm-monorepo en `research-apprunner.md`.
+- **Atlas:** se REUSA el cluster de dev local para el `api-dev` desplegado (ADR 11 exige
+  separar prod, no dev-local de dev-desplegado). Pendiente: Network Access para App Runner.
+- **Secretos:** `MONGODB_URI` + `CRYPTO_PRIVATE_KEY` a Parameter Store SecureString (ADR 11).
+- **CORS:** `CORS_ORIGINS` incluirá `https://dev.garcia3apps.com` (env var, no secreto).
+- **CNAME:** `api-dev` → App Runner (pendiente).
+
+---
+
 ## Cómo destruir todo (al terminar la evaluación)
 
 Se completará al final con los comandos `delete-*` en orden inverso. Recordatorio
