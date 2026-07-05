@@ -295,3 +295,59 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
   contrato para el MISMO mensaje visible); `continuous:true` (mantiene el mic abierto,
   exige gestionar reinicios, no aporta para un nombre corto); una excepción para que
   `stop()` manual no avise (complejidad sin valor claro).
+
+## 15. Endurecimiento del backend: CORS por allowlist, error handler y logging (feature `backend_hardening`)
+
+- **Contexto (2026-07-04):** al cablear los endpoints reales de cifrado/contador,
+  el front y el back se sirven en dominios distintos en producción (subdominio por
+  marca en CloudFront ↔ Express en App Runner), así que la conexión cross-origin es
+  real. `app.ts` no tenía `cors`/`helmet`, ni había manejador de errores centralizado,
+  graceful shutdown ni logging estructurado (se usaba `console.*`). Detalle del "por
+  qué" de cada regla en `docs/seguridad.md` §3-4.
+- **Decisión:**
+  1. **CORS por allowlist desde entorno, nunca `origin:'*'`.** Nueva var
+     `CORS_ORIGINS` (lista separada por comas) validada con Zod en `env.ts`, con
+     default seguro en dev (`http://localhost:5173`). `methods: ['GET','POST']`,
+     `credentials:false` (no hay cookies). Coherente con white-label: cada marca/
+     entorno se despliega en un dominio distinto, así que los orígenes permitidos son
+     **configurables, no literales**.
+  2. **Un origen no permitido se rechaza devolviendo la petición SIN cabeceras CORS
+     (`callback(null, false)`), no lanzando un error 500.** El navegador bloquea la
+     respuesta por ausencia de `Access-Control-Allow-Origin`; el servidor no trata un
+     origen desconocido como fallo interno. Allowlist vacía = nadie cross-origin
+     (falla cerrado); peticiones sin cabecera `Origin` (curl, same-origin) se permiten.
+  3. **Orden de middlewares en `createApp()` (Express 5):** `helmet` → `cors` →
+     `express.json()` → `pino-http` → routers → `errorHandler`. cors/helmet ANTES de
+     las rutas. `createApp()` no cambia de firma (lee `env.ts` directo), así los tests
+     de Supertest siguen sin argumentos.
+  4. **Error handler centralizado** (middleware de 4 args): responde JSON consistente
+     `{ error, message }`; el `stack` solo se incluye si `!isProd`; los 5xx en prod
+     devuelven un `message` genérico (no filtra internals). Loguea por pino, nunca
+     `console.*`. No se añade `asyncHandler`: Express 5 ya reenvía los rechazos async.
+  5. **Graceful shutdown en `server.ts`** (no en `app.ts`): SIGTERM/SIGINT →
+     `httpServer.close()` (deja de aceptar conexiones) → `disconnectDb()` → `exit(0)`,
+     con timeout de seguridad que fuerza `exit(1)` si el cierre se cuelga.
+  6. **Logging estructurado con pino + pino-http** en lugar de `console.*`; se migran
+     los `console.info/error` de arranque de `server.ts`/`db.ts`.
+  7. **`express-rate-limit` en `POST /names`** (incluido, confirmado con el usuario):
+     defensa en profundidad contra abuso/fuerza bruta del endpoint de escritura.
+  8. **Menores:** `.nvmrc`/`.node-version` acorde a `engines.node`.
+- **Corrección (2026-07-04, verificada en runtime):** el "menor" de quitar
+  `@types/express` **se descarta**. La premisa era falsa: `express@5.2.1` NO trae
+  tipos propios (sin campo `types`/`typings` en su `package.json`, sin `index.d.ts`),
+  así que quitar `@types/express` rompe `tsc` (TS7016) en todos los `import ... from
+  'express'`. `@types/express` **se mantiene** como devDependency. `@types/cors` sí se
+  añade (cors tampoco trae tipos). El resto de la acceptance (cors/helmet/errorHandler/
+  shutdown/pino/rate-limit/.nvmrc) queda intacto.
+- **Por qué:** el reparto app.ts (testeable con Supertest) vs server.ts (arranque/
+  señales) mantiene los endpoints y middlewares verificables sin abrir puerto ni
+  Mongo, mientras que shutdown y wiring de pino se observan por smoke/runtime. La
+  allowlist configurable es la pieza que habilita el cross-origin real de `deploy`
+  sin hardcodear dominios. Rechazar CORS sin cabeceras (en vez de 500) es el
+  comportamiento estándar de la librería y no ensucia los logs con errores por cada
+  origen desconocido.
+- **Descartado:** `origin:'*'` (abre el back a cualquier web, incompatible con datos
+  del usuario); lanzar error en el callback de cors para origen no permitido (genera
+  5xx espurios y ruido de logs por tráfico legítimo de otros orígenes); `asyncHandler`
+  wrapper (innecesario en Express 5); mantener `console.*` (no estructurado, choca con
+  la acceptance de logging).

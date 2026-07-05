@@ -126,10 +126,10 @@
         "Manejador de errores centralizado que responde JSON consistente y no filtra stack traces en prod",
         "Graceful shutdown: SIGTERM/SIGINT cierran el servidor HTTP y la conexión Mongoose ordenadamente",
         "Logging estructurado con pino/pino-http en lugar de console.*",
-        "Menores: @types/express eliminado de devDependencies; .nvmrc/.node-version presentes",
+        "Menores: .nvmrc/.node-version presentes (nota: @types/express NO se elimina — Express 5.2.1 no trae tipos propios y quitarlo rompe tsc; ver docs/decisiones.md ADR 15)",
         "Tests del middleware (cors/helmet/errorHandler) sobre app.ts con Supertest (RED antes de implementar)"
       ],
-      "status": "pending",
+      "status": "done",
       "layer": "backend",
       "depends_on": ["consecutive_counter"]
     },
