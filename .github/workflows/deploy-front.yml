@@ -1,0 +1,78 @@
+name: Deploy Front
+
+# Despliega el FRONT (build estático) al entorno según la rama (ADR 21):
+#   push a dev  → dev.garcia3apps.com
+#   push a main → prod (elektra + shopinbaz, mismo bundle; ADR 20)
+# El BACKEND NO lo toca este workflow: los App Runner tienen AutoDeploymentsEnabled
+# y se redespliegan solos al detectar el push a su rama (ADR 21).
+# staging NO aparece aquí: es integración/CI sin deploy (ADR 21).
+on:
+  push:
+    branches: [dev, main]
+
+# Permiso mínimo + el id-token que OIDC necesita para asumir el rol IAM.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-front:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile --filter @nach/frontend...
+
+      # Determina el entorno y sus variables según la rama.
+      # dev  → VITE_APP_ENV=dev,  VITE_API_URL=api-dev (build-time)
+      # main → VITE_APP_ENV=prod, SIN VITE_API_URL (el front deriva api-<key> por host, ADR 20.a)
+      - name: Resolver entorno
+        id: env
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "bucket=prod-front.garcia3apps.com" >> "$GITHUB_OUTPUT"
+            echo "distribution=EGG76TCOPNRIB" >> "$GITHUB_OUTPUT"
+            echo "app_env=prod" >> "$GITHUB_OUTPUT"
+            echo "api_url=" >> "$GITHUB_OUTPUT"
+          else
+            echo "bucket=dev.garcia3apps.com" >> "$GITHUB_OUTPUT"
+            echo "distribution=E2F4MOT22AV6BH" >> "$GITHUB_OUTPUT"
+            echo "app_env=dev" >> "$GITHUB_OUTPUT"
+            echo "api_url=https://api-dev.garcia3apps.com" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build front
+        working-directory: frontend
+        env:
+          VITE_APP_ENV: ${{ steps.env.outputs.app_env }}
+          VITE_API_URL: ${{ steps.env.outputs.api_url }}
+        run: pnpm build
+
+      - name: Configurar credenciales AWS (OIDC, sin secretos)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: arn:aws:iam::026225422252:role/GitHubActionsNachDeploy
+          aws-region: us-east-1
+
+      - name: Subir a S3 (assets immutable + index.html no-cache)
+        run: |
+          aws s3 sync frontend/dist/ "s3://${{ steps.env.outputs.bucket }}/" --delete \
+            --exclude "index.html" --cache-control "public,max-age=31536000,immutable"
+          aws s3 cp frontend/dist/index.html "s3://${{ steps.env.outputs.bucket }}/index.html" \
+            --cache-control "no-cache,no-store,must-revalidate" --content-type "text/html"
+
+      - name: Invalidar CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ steps.env.outputs.distribution }}" --paths "/*"
