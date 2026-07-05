@@ -260,3 +260,255 @@ comportamiento, NO errores de import/setup:
   seed elektra).
 
 Rojo real: falla porque la cadena de fallback dev aún no existe.
+
+---
+
+## Bugfix RED — fondo blanco de la pantalla de bienvenida (2026-07-04)
+
+### Bug
+
+El fondo de `WelcomeScreen` se ve BLANCO (default del navegador) en vez del
+color de marca oscuro. Causa: ningún elemento aplica el token de fondo de
+marca `bg-brand-bg`, y ni `body` ni `#root` pintan fondo en `index.css`.
+
+### Criterios de aceptación (fix en AMBOS sitios — defensa en profundidad)
+
+1. El `<main>` de `WelcomeScreen` debe incluir la clase de token `bg-brand-bg`.
+2. El fondo global debe estar pintado en `body` (o `#root`) usando la variable
+   de marca `--brand-bg` (regla en `index.css` tipo
+   `background: rgb(var(--brand-bg))`).
+
+### Tests añadidos
+
+Archivo: `frontend/src/features/welcome/WelcomeScreen/WelcomeScreen.test.tsx`
+
+**Criterio #1 — token en el `<main>`** (assert de DOM con Testing Library):
+
+```ts
+describe('WelcomeScreen — fondo de marca (bug: fondo blanco)', () => {
+  it('el <main> aplica el token de fondo de marca bg-brand-bg', () => {
+    renderScreen();
+    const main = screen.getByRole('main');
+    expect(main).toHaveClass('bg-brand-bg');
+  });
+});
+```
+
+**Criterio #2 — fondo global en `index.css`** (assert sobre el archivo estático,
+NO sobre el DOM: se evita acoplarse al pipeline de Tailwind en runtime, que en
+jsdom no compila las utilidades). Se lee `src/index.css` desde `process.cwd()`
+(raíz del paquete `@nach/frontend`, que es el cwd de Vitest):
+
+```ts
+describe('index.css — fondo global de marca (bug: fondo blanco)', () => {
+  const indexCss = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8');
+
+  it('pinta el fondo global en body o #root usando rgb(var(--brand-bg))', () => {
+    const rule =
+      /(?:^|\s)(?:body|#root)\s*\{[^}]*background(?:-color)?\s*:[^;}]*rgb\(\s*var\(\s*--brand-bg\s*\)/is;
+    expect(indexCss).toMatch(rule);
+  });
+});
+```
+
+La regex es tolerante: acepta `body` o `#root`, `background` o
+`background-color`, espacios y el canal alfa opcional de Tailwind v4.
+
+> Nota sobre el criterio #2: se evaluó como razonable de testear porque
+> `index.css` es un archivo estático y la aserción es sobre su contenido, no
+> sobre estilo computado (que jsdom no resuelve sin compilar Tailwind). No es
+> frágil: no depende del orden de propiedades ni de valores concretos de color.
+
+### Evidencia del RED
+
+`pnpm --filter @nach/frontend exec vitest run src/features/welcome/WelcomeScreen/WelcomeScreen.test.tsx`
+
+```
+ Test Files  1 failed (1)
+      Tests  2 failed | 18 passed (20)
+```
+
+Los 2 fallos son AssertionError de comportamiento (implementación ausente), NO
+errores de import/setup. Los 18 tests previos siguen en verde:
+
+- Criterio #1:
+  ```
+  Error: expect(element).toHaveClass("bg-brand-bg")
+  Expected the element to have class:  bg-brand-bg
+  Received:  mx-auto flex min-h-screen w-full max-w-sm flex-col items-center px-6 py-10 text-brand-text
+  ```
+  → el `<main>` NO tiene aún `bg-brand-bg`.
+
+- Criterio #2:
+  ```
+  AssertionError: expected '@import \'tailwindcss\';…' to match
+  /(?:^|\s)(?:body|#root)\s*\{[^}]*background(?:-color)?…/is
+  ```
+  → `index.css` NO tiene aún regla de fondo global con `rgb(var(--brand-bg))`.
+
+---
+
+## RED — Bug de theming: utilidades de color de marca inválidas (`<alpha-value>`)
+
+**Fecha:** 2026-07-05
+**Fase:** RED
+**Criterio de aceptación mapeado:** #6 white-label — "los colores se consumen
+vía tokens Tailwind (`bg-brand-primary`, `text-brand-primary`, …); cero hex en
+componentes". No basta con que el token exista en `@theme`: la UTILIDAD que
+Tailwind genera para ese token tiene que ser un color CSS **válido**, o el
+navegador la descarta y la marca no se pinta.
+
+### El bug (confirmado en runtime con Playwright)
+
+En `frontend/src/index.css`, el bloque `@theme inline` define los tokens como:
+
+```css
+--color-brand-primary: rgb(var(--brand-primary) / <alpha-value>);
+```
+
+Tailwind v4 emite las utilidades (`.text-brand-primary`, `.bg-brand-primary`,
+`.text-brand-muted`, …) con el literal `<alpha-value>` **sin sustituir**,
+produciendo `color: rgb(var(--brand-primary) / <alpha-value>)`. Ese
+`<alpha-value>` es un placeholder inválido: el navegador rechaza la declaración
+entera y el color de marca no llega a la CSSOM. Consecuencia verificada en
+`http://localhost:5173`: el `<h1>` con `text-brand-primary` hereda el color de
+texto en vez de ser morado; el botón con `bg-brand-primary` queda con fondo
+transparente. **Los colores de marca NO se aplican.**
+
+### Por qué un test de render con Testing Library NO capturaría esto
+
+Vitest + jsdom **no compilan Tailwind ni validan CSS real**. Se verificó que
+`el.style.color = 'rgb(var(--brand-primary) / <alpha-value>)'` en jsdom NO
+descarta el valor (lo almacena tal cual), a diferencia del navegador. Por tanto
+un test de `render()` + `getComputedStyle` nunca vería el defecto.
+
+### Test añadido (comportamiento, no solución)
+
+**Ruta:** `frontend/src/brand/core/brandUtilitiesCss.test.ts`
+
+Compila el `src/index.css` **real** con el pipeline programático de Tailwind v4
+(`compile()` de `tailwindcss`, el mismo motor que `@tailwindcss/vite`),
+resolviendo `@import 'tailwindcss'` contra el paquete instalado, con un set de
+clases de prueba (una por token de color de marca, cubriendo `text-*` y `bg-*`).
+Luego afirma sobre el **CSS generado**:
+
+| Test | Qué valida |
+|---|---|
+| `genera una regla para cada utilidad…` | Guarda de cordura: la compilación funciona y las reglas existen (aísla "regla ausente" de "valor inválido"). **Pasa hoy.** |
+| `NO deja el placeholder <alpha-value> sin sustituir…` | El CSS final no contiene el marcador inválido. **Falla hoy (RED).** |
+| `text-brand-primary produce un color CSS válido…` | La declaración `color` de `.text-brand-primary` no tiene `<alpha-value>` y sigue usando `var(--brand-primary)` (theming en vivo por marca). **Falla hoy (RED).** |
+| `bg-brand-primary produce un background-color CSS válido…` | Ídem para `background-color` de `.bg-brand-primary`. **Falla hoy (RED).** |
+| `ninguna declaración de color/background de marca contiene un placeholder…` | Barre las 8 utilidades y lista las infractoras. **Falla hoy (RED).** |
+
+La aserción es de **comportamiento** ("la utilidad brand produce un color
+usable"), no de solución: no exige una técnica concreta de theming, solo que el
+CSS emitido sea un color válido sin placeholders y que siga leyendo la CSS var
+de marca. Cualquier arreglo correcto en `@theme inline` (p. ej. definir los
+tokens como el canal RGB crudo que Tailwind resuelva bien) pondrá los tests en
+verde.
+
+### Evidencia del RED
+
+`pnpm --filter @nach/frontend exec vitest run src/brand/core/brandUtilitiesCss.test.ts`
+
+```
+ FAIL  src/brand/core/brandUtilitiesCss.test.ts > … > la utilidad bg-brand-primary produce un background-color CSS válido, no un placeholder
+AssertionError: expected 'rgb(var(--brand-primary) / <alpha-val…' not to contain '<alpha-value>'
+Expected: "<alpha-value>"
+Received: "rgb(var(--brand-primary) / <alpha-value>)"
+
+ FAIL  src/brand/core/brandUtilitiesCss.test.ts > … > ninguna declaración de color/background de marca contiene un placeholder inválido
+AssertionError: utilidades con placeholder inválido:
+.text-brand-primary { color: rgb(var(--brand-primary) / <alpha-value>) }
+.bg-brand-primary { background-color: rgb(var(--brand-primary) / <alpha-value>) }
+.text-brand-accent { color: rgb(var(--brand-accent) / <alpha-value>) }
+.bg-brand-accent { background-color: rgb(var(--brand-accent) / <alpha-value>) }
+.text-brand-text { color: rgb(var(--brand-text) / <alpha-value>) }
+.text-brand-muted { color: rgb(var(--brand-muted) / <alpha-value>) }
+.bg-brand-bg { background-color: rgb(var(--brand-bg) / <alpha-value>) }
+.bg-brand-surface { background-color: rgb(var(--brand-surface) / <alpha-value>) }
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 1 passed (5)
+```
+
+Los 4 fallos son AssertionError de comportamiento (el CSS generado contiene el
+placeholder inválido), NO errores de import/setup: el único test que pasa
+confirma que la compilación de Tailwind y la extracción de reglas funcionan.
+`eslint` y `tsc -b --noEmit` sobre el archivo pasan en limpio. **RED real
+confirmado.** No se tocó código de producción (`index.css` intacto).
+
+RED real confirmado: ambos fallan porque la implementación no existe.
+
+---
+
+## RED — fallback de assets rotos (degradación white-label)
+
+**Fecha:** 2026-07-05
+**Archivo:** `frontend/src/features/welcome/WelcomeScreen/WelcomeScreen.test.tsx`
+(nuevo `describe` "WelcomeScreen — fallback de assets de marca rotos").
+
+### Problema (verificado en navegador con Playwright)
+
+Los dos `<img>` de `WelcomeScreen.tsx` (logo e ilustración) usan
+`src={assets.logo}` / `src={assets.illustration}` de la config de marca **sin
+manejo de error**. Las marcas remotas (elektra/shopinbaz apuntan a
+`https://brands.garcia3apps.com/<key>/...svg`) dan 404/red/CORS y el navegador
+pinta el **ícono roto** — degradación pobre para un producto white-label.
+
+### Comportamiento deseado (contrato bajo prueba)
+
+- Si el `<img>` de un asset de marca dispara `onError`, su `src` cae al asset
+  **bundleado de la marca default** (`DEFAULT_BRAND.assets`, rutas
+  `/brands/default/logo.svg` y `/brands/default/illustration.svg`, que existen
+  en `public/`). El logo cae al logo de default; la ilustración a la de default.
+- **Guarda anti-bucle:** el swap ocurre **como mucho una vez**. Si el src ya es
+  el de default (o el fallback también falla), `onError` NO re-asigna → sin
+  bucle infinito de errores.
+- Sin cambios cuando el asset carga bien (default en local, o prod con bucket
+  poblado).
+
+### Tests y mapeo
+
+| Test | Qué cubre | Criterio |
+|---|---|---|
+| ANCLA: DEFAULT_BRAND expone las rutas bundleadas de fallback | Fuente de verdad de las rutas; elektra remoto ≠ default | precondición |
+| logo de marca falla → src cae al logo de default | Camino feliz del fallback del logo | fallback logo |
+| ilustración de marca falla → src cae a la de default | Camino feliz del fallback de la ilustración | fallback ilustración |
+| no re-entra si el src ya es el de default (guarda anti-bucle) | Borde: marca default, `error` sobre el src ya-default no reasigna (`setAttribute('src')` nunca se llama) | anti-bucle |
+| dos errores seguidos sobre el logo dejan el src estable en default | Borde end-to-end: 2º `error` (el fallback "falla") no re-dispara swap | anti-bucle |
+
+**Técnica:** `fireEvent.error(img)` de Testing Library simula el fallo de carga
+(jsdom no carga imágenes reales). Se localizan los `<img>` por rol/nombre
+(`logoAlt` / `illustrationAlt`). Las rutas de fallback se afirman contra
+`DEFAULT_BRAND.assets` (import de `brand/core/registry`), sin strings sueltos.
+Se reutiliza el helper `renderScreen(config)` y los mocks de `useNameSubmission`
+/ `useVoiceInput` ya existentes.
+
+### Evidencia del RED
+
+`pnpm --filter @nach/frontend test -- --run WelcomeScreen -t "fallback de assets"`
+
+```
+FAIL … > cuando el logo de marca falla al cargar, su src cae al logo de default
+Expected the element to have attribute: src="/brands/default/logo.svg"
+Received:                               src="https://brands.garcia3apps.com/elektra/logo.svg"
+
+FAIL … > cuando la ilustración de marca falla al cargar, su src cae a la ilustración de default
+Expected the element to have attribute: src="/brands/default/illustration.svg"
+Received:                               src="https://brands.garcia3apps.com/elektra/illustration.svg"
+
+FAIL … > guarda anti-bucle end-to-end: dos errores seguidos … dejan el src estable en default
+Expected the element to have attribute: src="/brands/default/logo.svg"
+Received:                               src="https://brands.garcia3apps.com/elektra/logo.svg"
+
+Tests  3 failed | 184 passed (187)
+```
+
+Los 3 fallos son **AssertionError de comportamiento**: sin `onError` en el
+componente el `src` se queda en la ruta remota rota, que es exactamente la razón
+correcta (código ausente), no un error de import/setup. Los 2 tests de guarda
+(ANCLA de rutas y anti-bucle sobre la marca default) pasan hoy porque verifican
+precondiciones y la **ausencia** de re-asignación, que sin implementación se
+cumple trivialmente — quedan como red de seguridad para la fase GREEN. **RED
+real confirmado.** No se tocó código de producción (`WelcomeScreen.tsx` intacto).

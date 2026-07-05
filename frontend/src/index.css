@@ -9,30 +9,35 @@
  * inyecta en `:root` en tiempo de ejecución. Cambiar de marca = cambiar estas
  * variables, sin tocar la lógica de ningún componente.
  *
- * Los valores viven como canales RGB ("R G B") para poder combinarlos con la
- * opacidad de Tailwind (`bg-brand-primary/50`).
+ * Los valores viven como canales RGB ("R G B") en `:root`; el token los envuelve
+ * en `rgb(...)` para producir un color completo. En Tailwind v4 la opacidad
+ * (`bg-brand-primary/50`) la resuelve el motor vía `color-mix`, que exige un
+ * color completo — NO uses el placeholder `/ <alpha-value>` (mecanismo de v3,
+ * inexistente en v4: dejaría la utilidad con un valor CSS inválido que el
+ * navegador descarta, y ningún color de marca se aplicaría).
  */
 /*
  * `@theme inline` incrusta el valor del token directamente en las utilidades
- * (`.bg-brand-primary { background-color: rgb(var(--brand-primary) / …) }`), de
- * modo que las clases leen EN VIVO las CSS vars `--brand-*` que el ThemeProvider
+ * (`.bg-brand-primary { background-color: rgb(var(--brand-primary)) }`), de modo
+ * que las clases leen EN VIVO las CSS vars `--brand-*` que el ThemeProvider
  * inyecta/actualiza en `:root` en runtime (theming dinámico sin recargar).
  */
 @theme inline {
-  --color-brand-bg: rgb(var(--brand-bg) / <alpha-value>);
-  --color-brand-surface: rgb(var(--brand-surface) / <alpha-value>);
-  --color-brand-primary: rgb(var(--brand-primary) / <alpha-value>);
-  --color-brand-accent: rgb(var(--brand-accent) / <alpha-value>);
-  --color-brand-text: rgb(var(--brand-text) / <alpha-value>);
-  --color-brand-muted: rgb(var(--brand-muted) / <alpha-value>);
+  --color-brand-bg: rgb(var(--brand-bg));
+  --color-brand-surface: rgb(var(--brand-surface));
+  --color-brand-primary: rgb(var(--brand-primary));
+  --color-brand-accent: rgb(var(--brand-accent));
+  --color-brand-text: rgb(var(--brand-text));
+  --color-brand-muted: rgb(var(--brand-muted));
 }
 
-/* Fallback por defecto; el ThemeProvider sobreescribe estos valores por marca. */
+/* Fallback por defecto; el ThemeProvider sobreescribe estos valores por marca.
+ * Coinciden con la marca neutra bundleada (`brand/data/default.json`). */
 :root {
   --brand-bg: 23 22 26;
   --brand-surface: 38 36 43;
-  --brand-primary: 170 59 255;
-  --brand-accent: 170 59 255;
+  --brand-primary: 124 92 252;
+  --brand-accent: 124 92 252;
   --brand-text: 245 245 247;
   --brand-muted: 148 143 156;
 
@@ -40,4 +45,15 @@
   --brand-radius: 0.75rem;
   --brand-font: system-ui, sans-serif;
   --brand-title-weight: 700;
+}
+
+/*
+ * Fondo y color de texto globales por marca (defensa en profundidad junto al
+ * token `bg-brand-bg` del `<main>`): así el lienzo fuera del contenedor de la
+ * pantalla no queda en blanco del navegador. Lee EN VIVO las CSS vars que el
+ * ThemeProvider inyecta en `:root`, por lo que cambia de color al cambiar de marca.
+ */
+body {
+  background: rgb(var(--brand-bg));
+  color: rgb(var(--brand-text));
 }
