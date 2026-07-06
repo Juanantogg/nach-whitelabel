@@ -50,6 +50,19 @@ export const brandConfigSchema = z
         errorGeneric: z.string().default('No pudimos procesarlo. Inténtalo de nuevo.'),
         errorNetwork: z.string().default('Sin conexión. Revisa tu internet e inténtalo.'),
         retryLabel: z.string().default('Reintentar'),
+        // Textos de la pantalla EXTRA de listado de registros (`/records`, ADR
+        // 26/27). Sub-bloque propio con `.prefault({})` y `.default()` por campo:
+        // marca nueva = un JSON, ninguna marca existente edita el suyo.
+        records: z
+          .object({
+            title: z.string().default('Registros generados'),
+            nameHeader: z.string().default('Nombre'),
+            numberHeader: z.string().default('Número'),
+            loading: z.string().default('Cargando registros…'),
+            error: z.string().default('No pudimos cargar los registros. Inténtalo de nuevo.'),
+            empty: z.string().default('Aún no hay registros generados.'),
+          })
+          .prefault({}),
       })
       .prefault({}),
 

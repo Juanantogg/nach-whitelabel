@@ -17,6 +17,7 @@
  */
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import App from './App';
 import { ThemeProvider } from './brand/ThemeProvider';
 import { parseBrandConfig } from './brand/core/schema';
@@ -48,9 +49,14 @@ const brand = parseBrandConfig(shopinbazSeed);
 
 describe('App', () => {
   it('renderiza la pantalla de bienvenida con los textos de la marca activa', () => {
+    // Tras records_list (ADR 27) App declara <Routes>; necesita un Router ancestro.
+    // En "/" la ruta activa es WelcomeScreen. main.tsx pone <BrowserRouter>; aquí
+    // se usa <MemoryRouter> en la home para conducir la ruta desde el test.
     render(
       <ThemeProvider config={brand}>
-        <App />
+        <MemoryRouter initialEntries={['/']}>
+          <App />
+        </MemoryRouter>
       </ThemeProvider>,
     );
 

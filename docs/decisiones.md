@@ -867,3 +867,63 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
   camino preparado en el front.
 - **`requires_approval`: false** — el límite no cambia (sigue 15 en los 3 sitios); solo se añade
   feedback de UX en el front. No toca cifrado, validación del backend ni el contrato.
+
+## 26. `records_list`: nombre COMPLETO sin enmascarar (alias voluntario, no PII sensible) — feature `records_list`
+
+- **Contexto (2026-07-05):** la feature `records_list` es un EXTRA fuera del enunciado: una
+  pantalla que lista los registros persistidos (`nombre` + `número consecutivo`) leídos de Mongo,
+  como **evidencia visible de que el contador persiste** (metí "Juan"→42; recargo→sigue 42/Juan).
+  Al mostrar el nombre surge la pregunta de privacidad: `docs/seguridad.md:98-102` exige "no
+  persistir material CRIPTOGRÁFICO" (se respeta: no se guarda ni clave de sesión, ni IV, ni
+  ciphertext) y que `records_list` "respete la privacidad acordada". Se consideró enmascarar el
+  nombre (`J****`, o solo iniciales) por prudencia.
+- **Decisión (con el usuario, 2026-07-05):** se muestra el **NOMBRE COMPLETO, sin enmascarar**.
+- **Por qué:**
+  - Lo persistido **no es PII real**: es un **alias voluntario de ≤15 caracteres** que el usuario
+    teclea o dicta únicamente para el saludo ("¿Cómo prefieres que te llamemos?"). No hay cuentas,
+    login, email, teléfono ni dato que identifique a una persona (ADR 10: sin sistema de usuarios).
+  - Enmascararlo **no aporta seguridad real**: el nombre completo sigue en Mongo en claro
+    (`record.model.ts`); ocultarlo solo en la UI sería **teatro de seguridad**, no un control.
+  - Enmascarar **rompe el propósito** de la pantalla: es una herramienta de verificación del
+    evaluador (comprobar que el nombre que metió se guardó y sobrevive a recargas). `J****` no
+    permite verificar nada.
+  - La exigencia de `seguridad.md` ("respetar la privacidad acordada") se cumple: la privacidad
+    acordada para un alias no sensible voluntario es mostrarlo tal cual; lo que NO se expone es
+    material criptográfico, y eso se respeta.
+- **Alcance de auditoría:** esta feature **NO** dispara `security-auditor` — no toca cifrado,
+  claves ni el contrato de cifrado; solo LEE registros ya persistidos por `consecutive_counter`.
+  `GET /records` no descifra nada ni expone secretos.
+- **Descartado:**
+  - **Enmascarar (`J****`):** teatro de seguridad (el dato sigue en claro en Mongo), y rompe la
+    verificación que es el fin de la pantalla.
+  - **Solo iniciales:** mismo problema, con menos utilidad aún para el evaluador.
+
+## 27. `records_list`: React Router con ruta `/records` no listada (herramienta del evaluador, no control de acceso) — feature `records_list`
+
+- **Contexto (2026-07-05):** hasta ahora el front renderiza una sola pantalla (`App` → `WelcomeScreen`,
+  sin router). `records_list` añade una **segunda pantalla** (el listado). Hay que decidir cómo se
+  navega a ella y si debe ser visible.
+- **Decisión (con el usuario, 2026-07-05):**
+  - Se introduce **`react-router-dom`** (última estable) con dos rutas: **`/` → `WelcomeScreen`** y
+    **`/records` → `RecordsList`**.
+  - **`/records` NO tiene ningún enlace visible** en la UI (ni `<Link>`, ni botón, ni toggle): es una
+    **herramienta del evaluador** accesible **solo escribiendo la URL directamente**.
+- **IMPORTANTE — URL no listada ≠ URL protegida:** que la ruta no aparezca en la UI es **discreción,
+  no control de acceso**. El endpoint `GET /records` es **público**: cualquiera que conozca o adivine
+  `/records` entra y ve los registros. No hay auth porque no hay sistema de usuarios (ADR 10) y los
+  datos no son sensibles (ADR 26, alias voluntarios). Esto se documenta explícitamente para no dar la
+  falsa impresión de que "no listar" protege algo.
+- **Por qué:**
+  - Un router es la forma estándar y escalable de tener más de una pantalla; `react-router-dom` es la
+    librería de facto en React, mantenida y con tipos. La dependencia nueva se justifica aquí (dos
+    pantallas reales), no es bloat.
+  - No listar `/records` mantiene la pantalla de bienvenida **limpia y fiel a las maquetas** (que no
+    muestran ningún enlace a un listado), sin inventar UI que el enunciado no pide, mientras deja al
+    evaluador una vía directa para comprobar la persistencia.
+- **Descartado:**
+  - **Mostrar el listado tras generar (sin router, con estado):** mezcla dos responsabilidades en una
+    pantalla y ensucia el flujo core de bienvenida; un router separa limpio las dos vistas.
+  - **Toggle/enlace siempre visible a `/records`:** añade UI fuera de las maquetas y del enunciado; el
+    listado es instrumento de verificación, no una feature de producto para el usuario final.
+  - **Proteger `/records` con auth:** no hay sistema de usuarios (ADR 10) y los datos no son sensibles
+    (ADR 26); montar auth para esto sería scope injustificado.

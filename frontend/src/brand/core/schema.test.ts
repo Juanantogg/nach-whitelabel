@@ -252,3 +252,60 @@ describe('brandConfigSchema — text.maxLengthReached (voice_auto_send, ADR 25)'
     expect(config.text.maxLengthReached).toBe('Tope: {max} letras');
   });
 });
+
+/**
+ * Contrato de marca de records_list (design.md → §"Tokens y textos de marca").
+ *
+ * El listado de registros necesita su propio sub-bloque de textos, anidado bajo
+ * `text` como `text.records`, con `.prefault({})` en el bloque y `.default()` por
+ * campo: título, cabeceras (nombre/número), y los mensajes de los estados
+ * loading/error/empty. Regla white-label: marca nueva = un JSON, cero literales en
+ * componentes; ninguna marca existente (shopinbaz/elektra) debe editar su JSON.
+ *
+ * RED: falla hasta que el implementer añada el sub-bloque `text.records` al
+ * `brandConfigSchema`. Se prueba el MECANISMO (existencia + relleno por defaults +
+ * preservación de un parcial + tolerancia a JSON sin `records`), no el copy exacto:
+ * la fuente de verdad del default es `parseBrandConfig({}).text.records`.
+ */
+describe('brandConfigSchema — sub-bloque text.records (records_list)', () => {
+  it('un JSON sin records produce text.records con los seis campos completos y usables', () => {
+    const config = parseBrandConfig({});
+
+    // El sub-bloque existe.
+    expect(config.text.records).toBeDefined();
+
+    // Los seis textos mostrables por defecto no vacíos → marca usable sin declararlos.
+    expect(config.text.records.title.length).toBeGreaterThan(0);
+    expect(config.text.records.nameHeader.length).toBeGreaterThan(0);
+    expect(config.text.records.numberHeader.length).toBeGreaterThan(0);
+    expect(config.text.records.loading.length).toBeGreaterThan(0);
+    expect(config.text.records.error.length).toBeGreaterThan(0);
+    expect(config.text.records.empty.length).toBeGreaterThan(0);
+  });
+
+  it('conserva un valor parcial de text.records y rellena el resto con los defaults del schema', () => {
+    const defaults = parseBrandConfig({});
+    const config = parseBrandConfig({ text: { records: { title: 'Mis registros' } } });
+
+    // El valor provisto se respeta.
+    expect(config.text.records.title).toBe('Mis registros');
+    // Los sub-campos no provistos igualan el default del schema (no un literal).
+    expect(config.text.records.nameHeader).toBe(defaults.text.records.nameHeader);
+    expect(config.text.records.numberHeader).toBe(defaults.text.records.numberHeader);
+    expect(config.text.records.loading).toBe(defaults.text.records.loading);
+    expect(config.text.records.error).toBe(defaults.text.records.error);
+    expect(config.text.records.empty).toBe(defaults.text.records.empty);
+  });
+
+  it('un JSON que OMITE por completo el bloque records sigue siendo válido y aplica los defaults', () => {
+    const defaults = parseBrandConfig({});
+    // JSON de marca con otros textos pero SIN records.
+    const config = parseBrandConfig({ text: { title: 'Hola' } });
+
+    expect(config.text.title).toBe('Hola');
+    // records cae al default completo (prefault del sub-bloque).
+    expect(config.text.records).toEqual(defaults.text.records);
+    // Los demás campos previos de text quedan intactos → marca usable.
+    expect(config.text.submitLabel).toBe(defaults.text.submitLabel);
+  });
+});
