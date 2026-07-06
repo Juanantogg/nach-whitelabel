@@ -55,9 +55,39 @@ Por paquete: `pnpm --filter @nach/frontend <script>`.
 ## Git / commits
 
 - **Conventional Commits** obligatorio (lo valida commitlint en `commit-msg`):
-  `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, `ci:`…
+  `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, `ci:`… El **subject NO
+  puede empezar en mayúscula** (regla `subject-case`) — usa minúscula tras los dos puntos.
 - `pre-commit` corre lint-staged (Prettier + ESLint --fix sobre lo staged).
 - No hacer commit/push salvo que el usuario lo pida.
+
+### Flujo de ramas y deploy (ADR 21 — OBLIGATORIO)
+
+El repo tiene un pipeline CI/CD con cuatro niveles de rama. **Respetarlo es innegociable:**
+
+```
+feature ─PR→ staging ─PR→ dev ─PR→ main
+           (solo CI)   (deploy dev)  (deploy prod: elektra + shopinbaz)
+```
+
+- **`main`, `dev`, `staging` están PROTEGIDAS en GitHub:** el **push directo FALLA**
+  (rechazado por branch protection). Todo cambio entra **solo por Pull Request** con el
+  **CI en verde** (`quality` + `secret-scan`). No intentes `git push origin main|dev|staging`
+  — no funcionará. Trabaja en una **feature branch** y abre PR.
+- **`staging`** = rama de integración: **solo corre CI, NO despliega**. Es donde caen los PRs
+  de features nuevas, para acumular trabajo sin disparar deploys.
+- **Mergear a `dev` despliega el entorno dev. Mergear a `main` despliega PRODUCCIÓN**
+  (front prod + auto-redeploy de los backends elektra/shopinbaz en App Runner). Un push a
+  `dev`/`main` tiene efectos en producción — trátalo con el mismo cuidado que cualquier
+  acción con impacto: solo bajo petición explícita del usuario.
+- **Promoción siempre por PR:** `feature→staging`, luego `staging→dev`, luego `dev→main`.
+  El gate humano está en aprobar cada PR de promoción.
+- **Nota sobre squash-merge:** el repo usa squash. Con ramas de larga vida (staging/dev/main)
+  esto hace que diverjan en SHAs aunque el contenido sea idéntico → un PR de promoción puede
+  dar conflicto espurio. Se reconcilia realineando la rama de atrás a la de delante (reset a
+  la rama destino). Ver `progress/deploy/runbook-prod.md`.
+- El deploy del front se hace por **GitHub Actions con OIDC** (rol `GitHubActionsNachDeploy`,
+  sin secretos en el repo). El backend se **auto-despliega** por App Runner (no lo tocan las
+  Actions). Detalle en ADR 21 y `progress/deploy/`.
 
 ## Harness multi-agente
 
