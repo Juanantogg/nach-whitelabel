@@ -703,3 +703,54 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
 - **Nota:** al ser owner único, se puede mergear el propio PR; la protección impide el push
   directo y exige el PR + CI, que es lo que se busca (trazabilidad + calidad, no un segundo
   aprobador que no existe).
+
+## 22. Dictado universal: fallback a Whisper vía backend (Groq `whisper-large-v3-turbo`) — feature `voice_universal`
+
+- **Contexto (2026-07-05):** el dictado usa la Web Speech API nativa, que funciona en
+  Chrome/Edge/Safari pero NO en Firefox (no implementa la API) ni en Brave (bloquea el
+  servicio de reconocimiento de Google → `errorCode === 'network'`). `voice_reliability`
+  (ADR 14) ya degrada elegante ocultando el micrófono donde no hay forma de dictar. El
+  enunciado (`docs/ExamenPractico_Front.md`) permite explícitamente "APIs nativas, librerías
+  o **servicios de IA**". Se quiere dictado FUNCIONAL en los 4 navegadores. Research completo
+  con fuentes primarias 2026 en `progress/voice_universal/research.md` (sección "Research A vs B").
+
+- **Decisión:** añadir un **fallback** (no un reemplazo) basado en **Whisper vía backend**,
+  proveedor **Groq `whisper-large-v3-turbo`**. El front graba con `MediaRecorder`
+  (`audio/webm;codecs=opus`) y hace un único `POST` multipart a un endpoint propio
+  (`POST /voice/transcribe`); el backend reenvía el `Blob` **sin transcodificar** a Groq (que
+  acepta `webm` directo) con `language: 'es'` y devuelve `{ text }`. La `GROQ_API_KEY` es
+  secreto de entorno (Parameter Store en prod, validado por Zod al boot pero **opcional**:
+  su ausencia no tumba el arranque, solo desactiva el fallback), **nunca en el bundle ni en el
+  repo**. El fallback se activa SOLO cuando el camino nativo no sirve (`isSupported === false`
+  en Firefox, o `voiceUnavailable === true` en Brave); Chrome/Safari siguen con Web Speech
+  nativo. Deps nuevas de backend aprobadas: `groq-sdk` (aísla el proveedor tras el service) y
+  `multer` (parseo multipart con límite de tamaño integrado). Una única clave de texto nueva en
+  el schema de marca: `voice.transcribingLabel` (con `.default()`, ninguna marca edita su JSON).
+
+- **Por qué fallback y no único método (decidido con el usuario, 2026-07-05):** hacer Groq el
+  ÚNICO motor metería una dependencia de red + API key + free tier externo en el camino que hoy
+  es gratis, instantáneo e infalible (Chrome/Safari, la mayoría de evaluadores), con peor
+  latencia (se pierden los parciales en vivo de `interimResults`) y jubilando la UX nativa ya
+  `done` (`voice_ux`, `voice_reliability`). El valor de la feature es **rescatar Firefox/Brave**,
+  y el fallback lo logra sin degradar a nadie más. Usar lo nativo donde funciona y caer al
+  servicio de IA donde no, es la decisión de ingeniería defendible ante el evaluador. La
+  presentación se unifica en `NameField` para que el usuario no perciba qué motor corre debajo.
+
+- **Por qué Groq/Whisper-backend frente a las alternativas:** fiabilidad idéntica en los 4
+  navegadores (el trabajo lo hace el servidor); **sin transcodificar** (Groq acepta webm/opus
+  directo → se elimina la Web Audio API y el troceo PCM que hacía caro a Transcribe); encaja con
+  la infra existente (~35 líneas de endpoint en el backend ya en App Runner, key por el mismo
+  patrón Parameter Store que `CRYPTO_PRIVATE_KEY`); coste ~nulo (free tier Groq 2.000 req/día);
+  latencia de cientos de ms; y el service aísla el proveedor tras `transcribeAudio(...)` →
+  cambiar a OpenAI sería tocar solo ese archivo.
+
+- **Alternativas descartadas** (detalle en `progress/voice_universal/research.md`):
+  - **(B) transformers.js (Whisper WASM/WebGPU en el navegador):** 0 backend y 0 secreto, pero
+    castiga justo a Firefox/Linux (sin WebGPU estable en 2026 → WASM lento) con una descarga de
+    modelo de 78-145 MB antes del primer texto — peor experiencia en el navegador a rescatar — y
+    mete complejidad WASM/WebGPU + ampliación de la CSP para el CDN de HuggingFace.
+  - **Amazon Transcribe (streaming):** descartado antes (2026-07-04, usuario): exige PCM crudo
+    transcodificado + proxy WebSocket de larga duración en App Runner + coste $0.024/min.
+  - **OpenAI `gpt-4o-mini-transcribe`:** alternativa válida y ~igual de simple; Groq gana por
+    free tier más generoso y menor latencia. El endpoint queda agnóstico, así que Groq no cierra
+    la puerta a cambiar de proveedor.

@@ -345,7 +345,7 @@ describe('NameField — UX de voz: errores → texto de marca en aria-live (voic
   });
 });
 
-describe('NameField — UX de voz: no-soporte (voice_ux casos 13-14, actualizados por voice_reliability)', () => {
+describe('NameField — UX de voz: no-soporte (voice_ux casos 13-14, actualizados por voice_universal)', () => {
   beforeEach(() => {
     voiceMock.status = 'idle';
     voiceMock.isSupported = true;
@@ -360,15 +360,17 @@ describe('NameField — UX de voz: no-soporte (voice_ux casos 13-14, actualizado
     vi.clearAllMocks();
   });
 
-  // Caso 13 — REGRESIÓN (cambio de spec voice_reliability: de "deshabilitar" a "ocultar").
-  // Antes: el botón existía disabled con aria-label voice.unsupported.
-  // Ahora: sin soporte NO se renderiza botón de mic alguno (ni startLabel ni unsupported).
-  it('sin soporte: NO se renderiza botón de mic (ni startLabel ni unsupported ausentes)', () => {
+  // Caso 13 — REGRESIÓN (cambio de spec voice_universal / ADR 22, aprobada por el
+  // usuario: de "ocultar el mic" a DEGRADACIÓN FUNCIONAL). Antes (voice_reliability):
+  // sin soporte NO se renderizaba botón de mic. Ahora: sin soporte el mic SÍ se
+  // renderiza (con el startLabel de marca) y opera el fallback de Groq. Que sea el
+  // FALLBACK quien se dispara (y no el nativo) lo verifica N1 en
+  // NameField.fallback.test.tsx; aquí solo se afirma la presencia del botón.
+  it('sin soporte: el botón de mic SÍ se renderiza (startLabel de marca) para el fallback', () => {
     voiceMock.isSupported = false;
     voiceMock.status = 'unsupported';
     renderNameField('');
-    expect(screen.queryByRole('button', { name: brand.voice.unsupported })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: brand.voice.startLabel })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
   });
 
   // Caso 14 — se mantiene: el formulario no se rompe, el input manual sigue disponible.
@@ -443,21 +445,17 @@ describe('NameField — UX de voz: cero literal / white-label (voice_ux caso 15)
     expect(screen.getByRole('status')).toHaveTextContent(otherBrand.voice.permissionDenied);
   });
 
-  // REGRESIÓN (voice_reliability): el no-soporte ya no muestra un botón con
-  // voice.unsupported, sino que oculta el mic. El white-label del no-soporte se
-  // reconvierte: con otra marca sin soporte, tampoco hay botón de mic (ni con el
-  // startLabel ni con el unsupported de ESA marca) — la ocultación es agnóstica de
-  // marca y no filtra literales.
-  it('sin soporte: no se renderiza botón de mic con textos de la marca activa (ocultación white-label)', () => {
+  // REGRESIÓN (voice_universal / ADR 22): el no-soporte ya no oculta el mic, lo
+  // DEGRADA al fallback. El white-label del no-soporte se conserva: con otra marca
+  // sin soporte, el botón de mic SÍ se renderiza y su aria-label proviene del
+  // startLabel de ESA marca (no de un literal ni del startLabel de shopinbaz).
+  it('sin soporte: el botón de mic usa el startLabel de la marca activa (white-label del fallback)', () => {
     voiceMock.isSupported = false;
     voiceMock.status = 'unsupported';
     renderWithBrand(otherBrand);
-    expect(
-      screen.queryByRole('button', { name: otherBrand.voice.unsupported }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: otherBrand.voice.startLabel }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: otherBrand.voice.startLabel })).toBeInTheDocument();
+    // Sigue sin filtrar el startLabel de la marca del seed (shopinbaz).
+    expect(screen.queryByRole('button', { name: brand.voice.startLabel })).not.toBeInTheDocument();
   });
 });
 
@@ -473,7 +471,7 @@ describe('NameField — UX de voz: cero literal / white-label (voice_ux caso 15)
  * recorte a 15 cada emisión de voz (parcial o final) antes de onChange. Todo se
  * observa por rol/aria/texto de marca (nunca por clase CSS ni literal).
  */
-describe('NameField — voice_reliability: ocultación del mic (B11, B12, B13)', () => {
+describe('NameField — voice_universal: el mic degrada al fallback (B11, B12, B13)', () => {
   beforeEach(() => {
     voiceMock.status = 'idle';
     voiceMock.isSupported = true;
@@ -488,27 +486,33 @@ describe('NameField — voice_reliability: ocultación del mic (B11, B12, B13)',
     vi.clearAllMocks();
   });
 
-  // Caso B11 — mic NO renderizado si !isSupported (el textbox sigue).
-  it('!isSupported: no hay botón de mic (startLabel ni unsupported) y el textbox sigue presente', () => {
+  // Caso B11 — REGRESIÓN (voice_universal / ADR 22): antes (voice_reliability) el
+  // mic NO se renderizaba si !isSupported. Ahora SÍ se renderiza (con el startLabel
+  // de marca) y opera el fallback; el textbox sigue presente. Que sea el fallback
+  // quien se dispara lo verifica N1 en NameField.fallback.test.tsx.
+  it('!isSupported: el botón de mic (startLabel) SÍ está para el fallback y el textbox sigue presente', () => {
     voiceMock.isSupported = false;
     voiceMock.status = 'unsupported';
     renderNameField('');
-    expect(screen.queryByRole('button', { name: brand.voice.startLabel })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: brand.voice.unsupported })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
     expect(screen.getByRole('textbox')).toBeInTheDocument();
   });
 
-  // Caso B12 — mic oculto tras network (voiceUnavailable) aunque isSupported siga true.
-  it('voiceUnavailable=true (latch network): el botón de mic se oculta; textbox y contador siguen', () => {
+  // Caso B12 — REGRESIÓN (voice_universal / ADR 22): antes el mic se OCULTABA tras
+  // un 'network' (voiceUnavailable, p.ej. Brave). Ahora el mic SÍ se muestra y cae
+  // al fallback de Groq; textbox y contador siguen. Que dispare el fallback y no el
+  // nativo lo verifica N2 en NameField.fallback.test.tsx.
+  it('voiceUnavailable=true (Brave): el botón de mic SÍ está para el fallback; textbox y contador siguen', () => {
     voiceMock.isSupported = true;
     voiceMock.voiceUnavailable = true;
     renderNameField('Ana');
-    expect(screen.queryByRole('button', { name: brand.voice.startLabel })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
     expect(screen.getByRole('textbox')).toBeInTheDocument();
     expect(screen.getByText('3/15 caracteres')).toBeInTheDocument();
   });
 
-  // Caso B13 — regresión: en el caso normal el mic SÍ se muestra (no se oculta de más).
+  // Caso B13 — se mantiene: en el caso normal (nativo disponible) el mic también se
+  // muestra. Que use el hook NATIVO (no el fallback) lo verifica N3.
   it('caso normal (isSupported=true, voiceUnavailable=false): el botón de mic startLabel está presente', () => {
     renderNameField('');
     expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();

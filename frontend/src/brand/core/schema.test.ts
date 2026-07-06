@@ -171,3 +171,40 @@ describe('brandConfigSchema — bloque voice (voice_capture, acceptance #12)', (
     expect(config.colors).toEqual(defaults.colors);
   });
 });
+
+/**
+ * RED — voice_universal (design §5.6, SC1). El estado "transcribiendo" del
+ * fallback por IA no tiene equivalente en el flujo nativo ni texto existente que
+ * lo cubra, así que se añade UNA sola clave nueva al bloque `voice`:
+ * `transcribingLabel`, con `.default()` para que ninguna marca existente edite su
+ * JSON (principio "marca nueva = un JSON").
+ *
+ * RED: falla hasta que el implementer añada `voice.transcribingLabel` al schema.
+ * Se prueba el MECANISMO (existencia + default no vacío + JSON que lo omite sigue
+ * válido), no el copy exacto: la fuente de verdad del default es
+ * `parseBrandConfig({}).voice.transcribingLabel`.
+ */
+describe('brandConfigSchema — voice.transcribingLabel (voice_universal, SC1)', () => {
+  it('parseBrandConfig({}) produce voice.transcribingLabel con un default no vacío', () => {
+    const config = parseBrandConfig({});
+
+    expect(config.voice.transcribingLabel).toBeDefined();
+    expect(typeof config.voice.transcribingLabel).toBe('string');
+    expect(config.voice.transcribingLabel.length).toBeGreaterThan(0);
+  });
+
+  it('un JSON de marca que OMITE transcribingLabel sigue siendo válido y rellena el default', () => {
+    const defaults = parseBrandConfig({});
+    // JSON de marca con otros textos de voz pero SIN transcribingLabel.
+    const config = parseBrandConfig({ voice: { startLabel: 'Dicta aquí' } });
+
+    expect(config.voice.startLabel).toBe('Dicta aquí');
+    // El campo omitido cae al default del schema (no un literal).
+    expect(config.voice.transcribingLabel).toBe(defaults.voice.transcribingLabel);
+  });
+
+  it('conserva un transcribingLabel provisto por la marca (white-label)', () => {
+    const config = parseBrandConfig({ voice: { transcribingLabel: 'Convirtiendo tu voz…' } });
+    expect(config.voice.transcribingLabel).toBe('Convirtiendo tu voz…');
+  });
+});

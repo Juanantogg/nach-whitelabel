@@ -9,6 +9,7 @@ import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { healthRouter } from './routes/health.routes.js';
 import { cryptoRouter } from './routes/crypto.routes.js';
 import { namesRouter } from './routes/names.routes.js';
+import { voiceRouter } from './routes/voice.routes.js';
 
 /**
  * Opciones de CORS: permite solo los orígenes de la allowlist (`env.corsOrigins`)
@@ -53,23 +54,26 @@ export function createApp(): Express {
   app.use('/health', healthRouter);
   app.use('/crypto', cryptoRouter);
 
-  // Rate-limit solo en el endpoint de escritura, contando por IP. Al exceder el
-  // límite responde JSON `{ error, message }` (mismo contrato que el resto de la
-  // API), no el HTML por defecto de express-rate-limit. El texto es genérico y no
-  // sensible.
-  const namesLimiter = rateLimit({
-    max: env.rateLimitMax,
-    windowMs: 60_000,
-    standardHeaders: true,
-    legacyHeaders: false,
-    handler: (_req: Request, res: Response) => {
-      res.status(429).json({
-        error: 'too_many_requests',
-        message: 'Demasiadas peticiones, inténtalo más tarde',
-      });
-    },
-  });
-  app.use('/names', namesLimiter, namesRouter);
+  // Rate-limit por IP en los endpoints de escritura/coste. Al exceder el límite
+  // responde JSON `{ error, message }` (mismo contrato que el resto de la API),
+  // no el HTML por defecto de express-rate-limit. El texto es genérico y no
+  // sensible. Cada endpoint usa su propio limiter (cubos independientes).
+  const makeLimiter = () =>
+    rateLimit({
+      max: env.rateLimitMax,
+      windowMs: 60_000,
+      standardHeaders: true,
+      legacyHeaders: false,
+      handler: (_req: Request, res: Response) => {
+        res.status(429).json({
+          error: 'too_many_requests',
+          message: 'Demasiadas peticiones, inténtalo más tarde',
+        });
+      },
+    });
+  app.use('/names', makeLimiter(), namesRouter);
+  // /voice reenvía audio a un proveedor de IA (coste): mismo rate-limit por IP.
+  app.use('/voice', makeLimiter(), voiceRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

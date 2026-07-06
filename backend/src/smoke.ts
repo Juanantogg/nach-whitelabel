@@ -13,5 +13,10 @@
 await import('./app.js');
 await import('./models/counter.model.js');
 await import('./models/record.model.js');
+// voice_universal: los tests de endpoint mockean el service, así que un import
+// ESM roto de `groq-sdk` (default vs named) solo reventaría en runtime. Se
+// importan router y service reales para cerrar ese hueco.
+await import('./routes/voice.routes.js');
+await import('./services/transcription.service.js');
 
 console.info('SMOKE_OK: la app y los modelos cargan en runtime sin errores de import');

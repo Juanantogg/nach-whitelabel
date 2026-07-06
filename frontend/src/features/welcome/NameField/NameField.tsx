@@ -1,6 +1,7 @@
 import { useBrand } from '../../../brand/ThemeProvider';
 import { NAME_MAX_LENGTH } from '../../../brand/core/constants';
 import { useVoiceInput, type VoiceErrorCode } from '../../../voice/useVoiceInput';
+import { useVoiceFallback, type FallbackErrorCode } from '../../../voice/useVoiceFallback';
 
 interface NameFieldProps {
   /** Valor controlado del nombre; el dueño del estado es el padre. */
@@ -16,41 +17,34 @@ function clampToMax(value: string): string {
 
 /**
  * Campo controlado del nombre: input manual + contador de marca + botón de
- * dictado por voz con su UX completa (toggle, feedback de escucha, errores y
- * no-soporte). Cero literales: placeholder, plantilla del contador y todos los
- * textos de voz salen de la config de marca. El límite de 15 se aplica en el
- * DOM (`maxLength`) y en el handler (defensa para el dictado, que no pasa por
- * `maxLength`).
+ * dictado por voz con su UX completa. El dictado tiene dos fuentes que la UI
+ * unifica: el camino NATIVO (Web Speech, Chrome/Safari) y, donde el nativo no
+ * sirve (Firefox `!isSupported`, Brave `voiceUnavailable`), un FALLBACK por IA
+ * (`useVoiceFallback`: graba y transcribe vía backend). Ambos rellenan el mismo
+ * estado con el mismo clamp de 15; el input manual es el camino garantizado.
+ * Cero literales: todos los textos y colores salen de la marca.
  */
 export function NameField({ value, onChange }: NameFieldProps) {
   const { text, voice } = useBrand();
 
-  // El dictado por voz set-ea el mismo estado que la escritura, con el mismo tope.
-  const { start, stop, isListening, isSupported, status, errorCode, voiceUnavailable } =
-    useVoiceInput({
-      onResult: (transcript) => onChange(clampToMax(transcript)),
-      lang: voice.lang,
-    });
+  // Una sola función de aplicación: el MISMO clamp de 15 para ambas fuentes.
+  const applyName = (transcript: string): void => onChange(clampToMax(transcript));
 
-  // El micrófono solo tiene sentido si hay forma de dictar: el navegador soporta
-  // la API y el servicio no está bloqueado (latch de 'network'). Si no, se oculta
-  // por completo (no se deshabilita) y el input manual queda como camino único.
-  const showMic = isSupported && !voiceUnavailable;
+  // Se llaman AMBOS hooks siempre (reglas de hooks); solo se cablea el activo.
+  const native = useVoiceInput({ onResult: applyName, lang: voice.lang });
+  const fallback = useVoiceFallback({ onResult: applyName });
+
+  // El nativo es preferente donde funciona: navegador con soporte y servicio no
+  // bloqueado. Si no, se degrada al fallback por IA (antes se ocultaba el mic).
+  const nativeAvailable = native.isSupported && !native.voiceUnavailable;
+  const useFallback = !nativeAvailable;
 
   const counter = text.counterTemplate
     .replace('{count}', String(value.length))
     .replace('{max}', String(NAME_MAX_LENGTH));
 
-  // Texto de error mapeado desde el código del hook, leyendo la marca activa.
-  // 'aborted' no llega como error (el hook lo normaliza a idle con errorCode=null).
-  const errorText: string | null =
-    status === 'error' && errorCode !== null ? voiceErrorText(errorCode) : null;
-
-  /**
-   * Mapea el código de error del hook al texto de la marca activa. 'aborted' no
-   * llega aquí (el hook lo normaliza a idle); cae al genérico por exhaustividad.
-   */
-  function voiceErrorText(code: VoiceErrorCode): string {
+  /** Mapea el código de error del hook NATIVO al texto de la marca activa. */
+  function nativeErrorText(code: VoiceErrorCode): string {
     switch (code) {
       case 'not-allowed':
         return voice.permissionDenied;
@@ -61,7 +55,42 @@ export function NameField({ value, onChange }: NameFieldProps) {
     }
   }
 
-  const buttonLabel = isListening ? voice.listeningLabel : voice.startLabel;
+  /** Mapea el código de error del FALLBACK al texto de la marca activa. */
+  function fallbackErrorText(code: FallbackErrorCode): string {
+    switch (code) {
+      case 'permission-denied':
+        return voice.permissionDenied;
+      case 'no-audio':
+        return voice.noSpeech;
+      default:
+        return voice.genericError; // network / unknown
+    }
+  }
+
+  // Vista unificada de la fuente activa: qué hace el botón, si está activo, si
+  // está ocupado transcribiendo, y el texto de error a mostrar. Cero literales.
+  const micActive = useFallback ? fallback.isRecording : native.isListening;
+  const isTranscribing = useFallback && fallback.isTranscribing;
+
+  const errorText: string | null = useFallback
+    ? fallback.status === 'error' && fallback.errorCode !== null
+      ? fallbackErrorText(fallback.errorCode)
+      : null
+    : native.status === 'error' && native.errorCode !== null
+      ? nativeErrorText(native.errorCode)
+      : null;
+
+  const buttonLabel = micActive ? voice.listeningLabel : voice.startLabel;
+
+  const onToggleMic = (): void => {
+    if (useFallback) {
+      if (fallback.isRecording) fallback.stop();
+      else fallback.start();
+    } else {
+      if (native.isListening) native.stop();
+      else native.start();
+    }
+  };
 
   return (
     <div className="flex w-full flex-col gap-1">
@@ -74,37 +103,40 @@ export function NameField({ value, onChange }: NameFieldProps) {
           onChange={(event) => onChange(clampToMax(event.target.value))}
           className="w-full bg-transparent py-2 text-brand-text placeholder:text-brand-muted focus:outline-none"
         />
-        {showMic && (
-          <button
-            type="button"
-            aria-label={buttonLabel}
-            aria-pressed={isListening}
-            onClick={() => (isListening ? stop() : start())}
-            className={`shrink-0 ${
-              isListening ? 'text-brand-accent motion-safe:animate-pulse' : 'text-brand-primary'
-            }`}
+        <button
+          type="button"
+          aria-label={buttonLabel}
+          aria-pressed={micActive}
+          aria-busy={isTranscribing}
+          onClick={onToggleMic}
+          className={`shrink-0 ${
+            micActive || isTranscribing
+              ? 'text-brand-accent motion-safe:animate-pulse'
+              : 'text-brand-primary'
+          }`}
+        >
+          {/* Icono de micrófono; el texto accesible vive en aria-label (marca). */}
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            className="h-5 w-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
           >
-            {/* Icono de micrófono; el texto accesible vive en aria-label (marca). */}
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-              <line x1="12" y1="19" x2="12" y2="23" />
-            </svg>
-          </button>
-        )}
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" y1="19" x2="12" y2="23" />
+          </svg>
+        </button>
       </div>
 
       <div className="flex items-center justify-between gap-2">
-        {showMic && isListening ? (
+        {isTranscribing ? (
+          <span className="text-sm text-brand-accent">{voice.transcribingLabel}</span>
+        ) : micActive ? (
           <span className="text-sm text-brand-accent">{voice.listeningLabel}</span>
         ) : (
           <span aria-hidden="true" />

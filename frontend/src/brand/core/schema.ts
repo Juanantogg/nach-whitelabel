@@ -84,6 +84,10 @@ export const brandConfigSchema = z
         startLabel: z.string().default('Dictar mi nombre'),
         // Etiqueta mientras escucha (para el toggle del botón).
         listeningLabel: z.string().default('Escuchando…'),
+        // Etiqueta mientras se transcribe el audio del fallback por IA (Firefox/
+        // Brave). Estado sin equivalente en el flujo nativo. Con `.default()`
+        // ninguna marca existente edita su JSON (marca nueva = un JSON).
+        transcribingLabel: z.string().default('Transcribiendo…'),
         // Errores mostrables (la UI decide cuáles enseñar).
         permissionDenied: z
           .string()
