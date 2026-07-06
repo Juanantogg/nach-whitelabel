@@ -8,6 +8,27 @@ configuración.
 
 > 📄 Enunciado completo y maquetas en [`docs/`](docs/).
 
+## 🌐 Entornos desplegados (AWS)
+
+La app corre en producción sobre AWS (S3 + CloudFront para el front, App Runner +
+MongoDB Atlas para el backend). El white-label se demuestra con **subdominio por marca**:
+
+| Entorno | Front | Backend (API) |
+| --- | --- | --- |
+| **Producción — Elektra** | https://elektra.garcia3apps.com | https://api-elektra.garcia3apps.com |
+| **Producción — Shopinbaz** | https://shopinbaz.garcia3apps.com | https://api-shopinbaz.garcia3apps.com |
+| **Desarrollo** | https://dev.garcia3apps.com · [?brand=elektra](https://dev.garcia3apps.com/?brand=elektra) · [?brand=shopinbaz](https://dev.garcia3apps.com/?brand=shopinbaz) | https://api-dev.garcia3apps.com |
+
+> **Multi-tenant real:** Elektra y Shopinbaz comparten el **mismo** bundle de front (se
+> auto-tematiza por subdominio), pero cada una tiene su **backend y su base de datos
+> aislados** — un cliente de una empresa nunca toca los datos de la otra (ver
+> [ADR 20](docs/decisiones.md)). En dev puedes previsualizar marcas con
+> `?brand=elektra` / `?brand=shopinbaz` (solo dev).
+>
+> Config y assets de marca se sirven desde `https://brands.garcia3apps.com` (S3+CloudFront).
+> Detalle completo de la infra y su despliegue en
+> [`progress/deploy/`](progress/deploy/) (runbooks de dev y prod).
+
 ## Stack
 
 | Capa       | Tecnología                                              |
@@ -16,7 +37,8 @@ configuración.
 | Backend    | Node.js · Express 5 · TypeScript · Mongoose (MongoDB)   |
 | Testing    | Vitest · Testing Library (front) · Supertest (back)     |
 | Tooling    | pnpm workspaces · ESLint · Prettier · Husky · commitlint |
-| CI         | GitHub Actions (lint · typecheck · test · build)        |
+| CI/CD      | GitHub Actions (CI + deploy a AWS por OIDC, sin secretos) |
+| Infra      | AWS S3 · CloudFront · App Runner · Parameter Store · MongoDB Atlas |
 
 ## Requisitos
 
@@ -102,6 +124,12 @@ nach-whitelabel/
 - **TDD estricto** (RED → GREEN → REFACTOR) y **calidad automatizada**: Conventional
   Commits (commitlint), Prettier + ESLint vía Husky + lint-staged, y CI que corre
   lint, typecheck, test y build en cada push/PR.
+- **CI/CD con `staging` y deploy por rama** ([ADR 21](docs/decisiones.md)): el flujo es
+  `feature → staging → dev → main`. `staging` solo corre CI (integra features sin disparar
+  deploys); `dev` despliega a dev y `main` a producción. Las tres ramas están **protegidas**
+  (solo por PR, con CI verde). GitHub Actions despliega el front (S3 + CloudFront) y el
+  backend se auto-despliega en App Runner; la autenticación con AWS es por **OIDC**, sin
+  credenciales de larga duración en el repo.
 
 ## Convención de commits
 
