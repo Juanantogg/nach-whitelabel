@@ -222,6 +222,8 @@
         "Tests de la integración de voz en NameField (toggle, estado de escucha, no-soporte, error) con el hook/API mockeados (RED antes de implementar)"
       ],
       "status": "done",
+      "superseded_by": "voice_groq_default",
+      "superseded_note": "La UX de voz nativa (toggle isListening, feedback de escucha) queda reemplazada por el flujo grabar→enviar de Groq (ADR 23). El código y tests nativos se retiran.",
       "layer": "frontend",
       "depends_on": ["welcome_screen", "voice_capture"]
     },
@@ -246,6 +248,8 @@
         "Tests en RED antes de implementar: del hook (interimResults emite parciales; onend-sin-captura señaliza no-speech) y de NameField (mic oculto en no-soporte y en network; aviso de sin-captura)"
       ],
       "status": "done",
+      "superseded_by": "voice_groq_default",
+      "superseded_note": "interimResults, ocultar mic por soporte/network y aviso no-speech sintético eran propios del motor nativo Web Speech, ahora eliminado (ADR 23). Groq no los necesita.",
       "layer": "frontend",
       "depends_on": ["voice_ux"]
     },
@@ -270,8 +274,32 @@
         "Tests en RED antes de implementar (captura/fallback mockeados; sin depender de red ni de la API real)"
       ],
       "status": "done",
+      "superseded_by": "voice_groq_default",
+      "superseded_note": "La ARQUITECTURA de fallback (nativo preferente + Groq solo en Firefox/Brave) se revierte por ADR 23: Groq pasa a motor único. SIGUE VIGENTE de esta feature: el endpoint POST /voice/transcribe, la capa transcribeVoice, el proveedor Groq y la gestión de la key (todo commiteado en 1808940).",
       "layer": "fullstack",
       "depends_on": ["voice_reliability", "welcome_screen", "deploy"]
+    },
+    {
+      "name": "voice_groq_default",
+      "title": "Groq como motor de voz único + flujo grabar→enviar (rework)",
+      "description": "REWORK que revierte la arquitectura de fallback de voice_universal (ADR 22) por decisión del usuario tras verificar en runtime: en Brave el fallback reactivo gastaba la 1ª pulsación (nativo arranca, muere con 'network', solo la 2ª caía a Groq). Groq pasa a ser el motor ÚNICO en los 4 navegadores; se elimina useVoiceInput (Web Speech) y su UX en vivo. El botón cambia a grabar→enviar de 2 clics: idle→micrófono (clic graba), grabando→icono enviar (clic para y sube a Groq), enviando→ocupado con voice.transcribingLabel. Conserva el endpoint POST /voice/transcribe y transcribeVoice (commit 1808940). Ver ADR 23.",
+      "requires_approval": true,
+      "decisions": [
+        "Groq motor ÚNICO: se elimina useVoiceInput.ts y su test; el hook useVoiceFallback se renombra a useVoiceRecorder (motor principal, misma lógica). Trade-off aceptado: Chrome/Safari ahora también dependen de Groq+backend+key+red (antes solo Firefox/Brave); se pierden parciales en vivo. El input manual es el camino garantizado si el backend/Groq caen.",
+        "Botón grabar→enviar (2 clics): el icono refleja la acción del PRÓXIMO clic. Icono 'enviar' = SVG inline nuevo (avión de papel), mismo patrón que el micrófono actual (currentColor, tokens de marca, aria-hidden). Sin librería de iconos. Se verifica el render visualmente (qlmanage).",
+        "Cero texto nuevo en el schema: 'grabando' reusa voice.listeningLabel; 'enviando' reusa voice.transcribingLabel; errores reusan voice.permissionDenied/noSpeech/genericError. Se elimina aria-pressed (ya no es toggle).",
+        "Supersede voice_ux, voice_reliability y la orquestación de fallback de voice_universal; sus tests nativos (isListening/voiceUnavailable/aria-pressed/ocultar mic) se retiran con justificación del ADR 23. El endpoint backend NO se toca (es feature frontend)."
+      ],
+      "acceptance": [
+        "Groq es el único motor de voz en los 4 navegadores; useVoiceInput.ts y su test eliminados; sin referencias colgantes en App/WelcomeScreen/NameField",
+        "Botón grabar→enviar: clic1 en idle inicia grabación y el icono cambia a 'enviar'; clic2 para la grabación y sube el audio a Groq; durante la subida el botón queda aria-busy con voice.transcribingLabel y no acepta otro clic",
+        "La transcripción rellena el mismo campo con el tope de 15; errores (permiso/red/silencio/500 sin key) se comunican con textos de marca existentes en la región de estado; cero literales ni hex",
+        "El input manual permanece funcional en todos los casos; el icono 'enviar' (SVG inline) verificado visualmente",
+        "Tests en RED antes de implementar: del motor useVoiceRecorder (start→recording, stop→sube→onResult, permiso denegado, red caída, silencio) y de NameField (flujo 2 clics, cambio de icono, aria-busy, error, clamp 15, input manual). Tests nativos retirados con justificación. Sin depender de red ni de la API real"
+      ],
+      "status": "done",
+      "layer": "frontend",
+      "depends_on": ["voice_universal"]
     }
   ]
 }

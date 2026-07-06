@@ -2,28 +2,28 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api/apiError';
 import { transcribeVoice as defaultTranscribe } from '../api/transcribeVoice';
 
-/** Estados de la máquina del fallback por IA (análoga a la del hook nativo). */
-export type FallbackStatus = 'idle' | 'recording' | 'transcribing' | 'error';
+/** Estados de la máquina del motor de voz (captura de audio + transcripción). */
+export type RecorderStatus = 'idle' | 'recording' | 'transcribing' | 'error';
 
-/** Motivo de error del fallback, mapeable a los textos de marca existentes. */
-export type FallbackErrorCode = 'permission-denied' | 'no-audio' | 'network' | 'unknown';
+/** Motivo de error del motor, mapeable a los textos de marca existentes. */
+export type RecorderErrorCode = 'permission-denied' | 'no-audio' | 'network' | 'unknown';
 
-export interface UseVoiceFallbackOptions {
+export interface UseVoiceRecorderOptions {
   /**
    * Se invoca con la transcripción FINAL no vacía, lista para fusionar con el
-   * estado del nombre. El dueño del estado aplica el límite de 15 (mismo clamp
-   * que el nativo). Nunca se invoca con cadena vacía (silencio → 'no-audio').
+   * estado del nombre. El dueño del estado aplica el límite de 15. Nunca se
+   * invoca con cadena vacía (silencio → 'no-audio').
    */
   onResult: (transcript: string) => void;
   /** Capa de red inyectable (tests). Default: `transcribeVoice` real. */
   transcribe?: (audio: Blob) => Promise<string>;
 }
 
-export interface UseVoiceFallbackResult {
-  status: FallbackStatus;
+export interface UseVoiceRecorderResult {
+  status: RecorderStatus;
   isRecording: boolean;
   isTranscribing: boolean;
-  errorCode: FallbackErrorCode | null;
+  errorCode: RecorderErrorCode | null;
   start: () => void;
   stop: () => void;
 }
@@ -47,17 +47,17 @@ function pickMimeType(): string | undefined {
 }
 
 /**
- * Hook hermano de `useVoiceInput`, fuera de cualquier Provider. Captura audio con
+ * Motor de voz ÚNICO (Groq), fuera de cualquier Provider. Captura audio con
  * `getUserMedia`/`MediaRecorder`, al parar sube el `Blob` vía `transcribe` y
- * expone una máquina de estados análoga a la del nativo para que la UI no
- * distinga la fuente. No posee el estado del nombre: emite el texto por
- * `onResult`. Libera el micrófono al parar y en unmount.
+ * expone la máquina de estados que el botón de `NameField` mapea al flujo
+ * grabar→enviar. No posee el estado del nombre: emite el texto por `onResult`.
+ * Libera el micrófono al parar y en unmount.
  */
-export function useVoiceFallback(options: UseVoiceFallbackOptions): UseVoiceFallbackResult {
+export function useVoiceRecorder(options: UseVoiceRecorderOptions): UseVoiceRecorderResult {
   const { onResult, transcribe = defaultTranscribe } = options;
 
-  const [status, setStatus] = useState<FallbackStatus>('idle');
-  const [errorCode, setErrorCode] = useState<FallbackErrorCode | null>(null);
+  const [status, setStatus] = useState<RecorderStatus>('idle');
+  const [errorCode, setErrorCode] = useState<RecorderErrorCode | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);

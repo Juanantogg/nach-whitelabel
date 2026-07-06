@@ -10,8 +10,10 @@
  * La cobertura fina del layout/estados vive en `WelcomeScreen.test.tsx`; aquí solo
  * se afirma que `App` compone la pantalla real bajo la marca inyectada.
  *
- * Se mockean los hooks del borde (`useNameSubmission`, `useVoiceInput`) igual que
- * en los tests de welcome, para no arrastrar red/crypto/SpeechRecognition.
+ * Se mockean los hooks del borde (`useNameSubmission`, `useVoiceRecorder`) igual
+ * que en los tests de welcome, para no arrastrar red/crypto/getUserMedia. Tras el
+ * REWORK de voz (ADR 23) el único motor es `useVoiceRecorder` (Groq); ya no existe
+ * `useVoiceInput`.
  */
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -31,13 +33,12 @@ vi.mock('./features/welcome/useNameSubmission', () => ({
   }),
 }));
 
-vi.mock('./voice/useVoiceInput', () => ({
-  useVoiceInput: () => ({
+vi.mock('./voice/useVoiceRecorder', () => ({
+  useVoiceRecorder: () => ({
     status: 'idle',
-    isSupported: true,
-    isListening: false,
+    isRecording: false,
+    isTranscribing: false,
     errorCode: null,
-    transcript: '',
     start: vi.fn(),
     stop: vi.fn(),
   }),

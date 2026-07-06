@@ -706,6 +706,12 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
 
 ## 22. Dictado universal: fallback a Whisper vía backend (Groq `whisper-large-v3-turbo`) — feature `voice_universal`
 
+> **⚠️ SUPERSEDIDO en parte por el ADR 23 (2026-07-05).** La arquitectura de *fallback*
+> (nativo preferente + Groq solo en Firefox/Brave) se revierte: Groq pasa a ser el motor
+> ÚNICO. Lo que SIGUE VIGENTE de este ADR: el endpoint `POST /voice/transcribe`, el
+> proveedor Groq `whisper-large-v3-turbo` (webm directo, `language: 'es'`), la gestión de
+> la `GROQ_API_KEY` y el descarte de transformers.js/Transcribe. Ver ADR 23.
+
 - **Contexto (2026-07-05):** el dictado usa la Web Speech API nativa, que funciona en
   Chrome/Edge/Safari pero NO en Firefox (no implementa la API) ni en Brave (bloquea el
   servicio de reconocimiento de Google → `errorCode === 'network'`). `voice_reliability`
@@ -754,3 +760,45 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
   - **OpenAI `gpt-4o-mini-transcribe`:** alternativa válida y ~igual de simple; Groq gana por
     free tier más generoso y menor latencia. El endpoint queda agnóstico, así que Groq no cierra
     la puerta a cambiar de proveedor.
+
+## 23. Groq como motor de voz ÚNICO y flujo grabar→enviar — feature `voice_groq_default` (supersede parte del ADR 22)
+
+- **Contexto (2026-07-05):** el ADR 22 decidió Web Speech nativo como preferente y Groq solo
+  como **fallback** para Firefox/Brave. Probándolo en runtime apareció un defecto de UX del
+  fallback reactivo: en Brave el nativo **arranca**, muere con `error === 'network'`, y solo
+  **la 2ª pulsación** cae a Groq — la 1ª se desperdicia. El problema es estructural: no se puede
+  saber **a priori** si un Chromium tiene el servicio de reconocimiento de Google disponible
+  (Brave lo bloquea, Chrome no), así que la detección solo ocurre **después** de fallar una vez.
+  El "baile" nativo↔fallback es intrínseco a decidir entre dos motores en caliente.
+
+- **Decisión (con el usuario, 2026-07-05):** **Groq pasa a ser el motor de voz único** en los 4
+  navegadores. Se **elimina** `useVoiceInput` (Web Speech) y toda su UX en vivo. El motor de
+  grabación+transcripción (antes `useVoiceFallback`) pasa a ser el **motor principal** y se
+  renombra a `useVoiceRecorder`. La UX del botón cambia a **grabar → enviar en 2 clics**: el icono
+  refleja la acción del PRÓXIMO clic (micrófono para empezar a grabar; icono "enviar" nuevo, SVG
+  inline avión de papel, para parar la grabación y subir el audio a Groq); durante la subida el
+  botón queda ocupado (`aria-busy`) con `voice.transcribingLabel`.
+
+- **Qué se ELIMINA:** `frontend/src/voice/useVoiceInput.ts` y su test; toda la UX nativa en
+  `NameField` (toggle `isListening`, `voiceUnavailable`, `interimResults`, no-speech sintético,
+  ocultar/deshabilitar mic por soporte, `aria-pressed`). Los tests de `voice_ux`/`voice_reliability`
+  que afirman sobre esos comportamientos se retiran con justificación.
+
+- **Qué se CONSERVA sin cambios:** el endpoint backend `POST /voice/transcribe` (Groq, multer,
+  rate-limit), la capa de red `frontend/src/api/transcribeVoice.ts`, y el schema de marca `voice.*`
+  (cero clave nueva: "grabando" reusa `voice.listeningLabel`).
+
+- **Por qué motor único:** el valor de tener dos motores (nativo gratis/instantáneo en Chrome/Safari)
+  no compensa el "baile" de la 1ª pulsación en Brave ni la complejidad de orquestar dos hooks. Un
+  motor único da comportamiento idéntico y predecible en los 4 navegadores; la presentación
+  (grabar→enviar) es explícita y no depende de detectar soporte en caliente.
+
+- **Trade-off aceptado (explícito):** Chrome/Safari **ahora también** dependen de Groq + backend +
+  `GROQ_API_KEY` + red en el camino **común** (antes solo Firefox/Brave). Se pierden los parciales en
+  vivo (`interimResults`) y la latencia sube de ~0 a cientos de ms + red. A cambio: cero baile, un
+  solo camino de código, UX uniforme. Si el backend/Groq caen, el **input manual sigue siendo el
+  camino garantizado** (mitiga el riesgo).
+
+- **Supersede:** la parte del ADR 22 sobre arquitectura de fallback (nativo preferente); las features
+  `voice_ux` y `voice_reliability` (UX nativa completa, ADR 14); y la orquestación nativo↔fallback de
+  `voice_universal`. El endpoint y la decisión Groq/Whisper del ADR 22 siguen vigentes.

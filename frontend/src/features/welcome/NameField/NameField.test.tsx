@@ -1,24 +1,32 @@
 /**
- * Tests RED — features/welcome/NameField.
+ * Tests RED — features/welcome/NameField (motor de voz ÚNICO Groq, flujo
+ * grabar→enviar en 2 clics). Feature voice_groq_default, design §5.2 (F1-F11) y
+ * "Criterios de aceptación traducibles a tests" (§10).
  *
- * Deriva de welcome_screen (acceptance #2 de feature_list.json y "Límite / contador"
- * y "Voz" del plan de testeo de design.md):
- *  - El input está limitado a 15 caracteres (DOM + recorte defensivo en el handler).
- *  - El contador se renderiza desde `text.counterTemplate` interpolando {count}/{max};
- *    estado inicial "0/15 caracteres" como en las maquetas.
- *  - El dictado por voz (onResult de useVoiceInput) rellena el mismo estado y también
- *    se trunca a 15.
- *  - Botón de voz con aria-label de marca (`voice.startLabel`), degradación elegante
- *    si no hay soporte.
- *  - Cero literales de marca en el componente: placeholder, contador y label de voz
- *    salen de la config.
+ * REWORK (ADR 23): se elimina el motor nativo (`useVoiceInput`) y la orquestación
+ * nativo↔fallback. NameField pasa a consumir SOLO `useVoiceRecorder` (renombrado de
+ * `useVoiceFallback`) y la UX del botón cambia a un flujo lineal de 2 pasos: el
+ * icono refleja la acción del PRÓXIMO clic (micrófono en idle → "enviar" en
+ * recording), con `aria-busy` mientras transcribe. Se elimina `aria-pressed`.
+ *
+ * Mapeo estado → botón (design §2):
+ *   idle        → aria-label voice.startLabel      | clic ⇒ recorder.start()
+ *   recording   → aria-label voice.listeningLabel  | clic ⇒ recorder.stop()  (sube a Groq)
+ *   transcribing→ aria-label voice.transcribingLabel, aria-busy="true", disabled
+ *   error       → aria-label voice.startLabel + texto de error en role="status"
  *
  * `NameField` es CONTROLADO: dueño del estado del nombre es el padre (WelcomeScreen).
  * Se le pasan `value`/`onChange`; el componente aplica el tope de 15 al llamar a
- * `onChange` (tanto por teclado como por voz). Se mockea `useVoiceInput` (borde del
- * sistema: la SpeechRecognition API), NO la lógica del contador/límite bajo prueba.
+ * `onChange` (tanto por teclado como por voz). Se mockea SOLO `useVoiceRecorder`
+ * (borde del sistema: getUserMedia/MediaRecorder/red), NO la lógica del contador/
+ * límite/orquestación del botón bajo prueba. Todo se observa por rol/aria/texto de
+ * marca — nunca por clase CSS ni literal. El icono "enviar" es SVG (aria-hidden):
+ * se afirma indirectamente por el aria-label/estado del botón, NUNCA por su path.
  *
- * RED esperado: `./NameField` aún no existe → import falla, tests en rojo.
+ * RED esperado: el `NameField` actual importa `useVoiceInput`/`useVoiceFallback` y
+ * mantiene el flujo viejo (toggle + aria-pressed + ocultar mic por soporte). Este
+ * test mockea `useVoiceRecorder` (que el componente aún no consume) y afirma el
+ * flujo grabar→enviar nuevo → falla hasta la reescritura del componente.
  */
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -28,50 +36,51 @@ import { parseBrandConfig } from '../../../brand/core/schema';
 import shopinbazSeed from '../../../brand/seeds/shopinbaz.json';
 import { NameField } from './NameField';
 
-// --- Mock del hook de voz (borde del sistema). Controlable desde cada test. ---
-type VoiceStatus = 'unsupported' | 'idle' | 'listening' | 'error';
-interface VoiceMock {
+// --- Mock del ÚNICO motor de voz (useVoiceRecorder). Controlable desde cada test. ---
+interface RecorderMock {
   onResult: ((t: string) => void) | undefined;
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
-  status: VoiceStatus;
-  isSupported: boolean;
-  isListening: boolean;
-  errorCode: string | null;
-  transcript: string;
-  // voice_reliability: latch de sesión que oculta el mic tras un 'network'.
-  voiceUnavailable: boolean;
+  status: 'idle' | 'recording' | 'transcribing' | 'error';
+  isRecording: boolean;
+  isTranscribing: boolean;
+  errorCode: 'permission-denied' | 'no-audio' | 'network' | 'unknown' | null;
 }
-const voiceMock = vi.hoisted<VoiceMock>(() => ({
+const recorderMock = vi.hoisted<RecorderMock>(() => ({
   onResult: undefined,
   start: vi.fn(),
   stop: vi.fn(),
   status: 'idle',
-  isSupported: true,
-  isListening: false,
+  isRecording: false,
+  isTranscribing: false,
   errorCode: null,
-  transcript: '',
-  voiceUnavailable: false,
 }));
 
-vi.mock('../../../voice/useVoiceInput', () => ({
-  useVoiceInput: (opts: { onResult: (t: string) => void }) => {
-    // Guardamos el onResult del componente para simular el dictado desde el test.
-    voiceMock.onResult = opts.onResult;
+vi.mock('../../../voice/useVoiceRecorder', () => ({
+  useVoiceRecorder: (opts: { onResult: (t: string) => void }) => {
+    // Guardamos el onResult del componente para simular la transcripción desde el test.
+    recorderMock.onResult = opts.onResult;
     return {
-      status: voiceMock.status,
-      isSupported: voiceMock.isSupported,
-      isListening: voiceMock.isListening,
-      errorCode: voiceMock.errorCode,
-      transcript: voiceMock.transcript,
-      start: voiceMock.start,
-      stop: voiceMock.stop,
-      voiceUnavailable: voiceMock.voiceUnavailable,
+      status: recorderMock.status,
+      isRecording: recorderMock.isRecording,
+      isTranscribing: recorderMock.isTranscribing,
+      errorCode: recorderMock.errorCode,
+      start: recorderMock.start,
+      stop: recorderMock.stop,
     };
   },
 }));
 
 const brand = parseBrandConfig(shopinbazSeed);
+
+function resetRecorder(): void {
+  recorderMock.status = 'idle';
+  recorderMock.isRecording = false;
+  recorderMock.isTranscribing = false;
+  recorderMock.errorCode = null;
+  recorderMock.start.mockClear();
+  recorderMock.stop.mockClear();
+}
 
 /** Wrapper controlado: mantiene el estado y lo expone al test para afirmar. */
 function renderNameField(initial = '') {
@@ -97,31 +106,23 @@ function renderNameField(initial = '') {
   return { ...utils, onChange, getValue: () => current, rerender };
 }
 
-describe('NameField — contador y límite de 15 (acceptance #2)', () => {
-  beforeEach(() => {
-    voiceMock.status = 'idle';
-    voiceMock.isSupported = true;
-    voiceMock.isListening = false;
-    voiceMock.errorCode = null;
-    voiceMock.voiceUnavailable = false;
-    voiceMock.start.mockClear();
-    voiceMock.stop.mockClear();
-  });
+describe('NameField — contador y límite de 15 (acceptance #9, #7)', () => {
+  beforeEach(resetRecorder);
+  afterEach(() => vi.clearAllMocks());
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
+  // F9
   it('muestra el contador inicial "0/15 caracteres" desde counterTemplate', () => {
     renderNameField('');
     expect(screen.getByText('0/15 caracteres')).toBeInTheDocument();
   });
 
-  it('el contador refleja el largo actual del nombre (interpola {count})', () => {
+  // F9
+  it('el contador refleja el largo actual del nombre (interpola {count}): "3/15 caracteres" con "Ana"', () => {
     renderNameField('Ana');
     expect(screen.getByText('3/15 caracteres')).toBeInTheDocument();
   });
 
+  // F8
   it('escribir texto propaga el valor a onChange', async () => {
     const user = userEvent.setup();
     const { onChange } = renderNameField('');
@@ -129,215 +130,207 @@ describe('NameField — contador y límite de 15 (acceptance #2)', () => {
     expect(onChange).toHaveBeenCalledWith('A');
   });
 
+  // F8
   it('el input aplica maxLength=15 en el DOM', () => {
     renderNameField('');
     expect(screen.getByRole('textbox')).toHaveAttribute('maxLength', '15');
   });
 
-  it('el dictado por voz con un texto de más de 15 caracteres se trunca a 15', () => {
+  // F7 — la transcripción del motor con >15 chars se recorta a 15 antes de onChange.
+  it('el dictado (recorder.onResult) con un texto de más de 15 caracteres se trunca a 15', () => {
     const { onChange } = renderNameField('');
-    // Simula la transcripción final entregada por useVoiceInput.
-    voiceMock.onResult?.('NombreLarguísimoDeMás');
+    recorderMock.onResult?.('NombreLarguísimoDeMás');
     expect(onChange).toHaveBeenCalledWith('NombreLarguísim'); // exactamente 15 chars
     expect((onChange.mock.calls.at(-1)?.[0] as string).length).toBe(15);
   });
 
-  it('el dictado por voz rellena el mismo estado que la escritura manual', () => {
+  // F7 — el dictado rellena el mismo estado que la escritura manual (sin clamp cuando cabe).
+  it('el dictado (recorder.onResult) rellena el mismo estado que la escritura manual', () => {
     const { onChange } = renderNameField('');
-    voiceMock.onResult?.('Lucía');
+    recorderMock.onResult?.('Lucía');
     expect(onChange).toHaveBeenCalledWith('Lucía');
+  });
+
+  // F8 — el input manual funciona incluso con el motor transcribiendo.
+  it('el input manual sigue propagando a onChange aunque el recorder esté transcribiendo', async () => {
+    const user = userEvent.setup();
+    recorderMock.status = 'transcribing';
+    recorderMock.isTranscribing = true;
+    const { onChange } = renderNameField('');
+    await user.type(screen.getByRole('textbox'), 'A');
+    expect(onChange).toHaveBeenCalledWith('A');
   });
 });
 
-describe('NameField — botón de voz y textos de marca (acceptance #1, voz)', () => {
-  beforeEach(() => {
-    voiceMock.status = 'idle';
-    voiceMock.isSupported = true;
-    voiceMock.isListening = false;
-    voiceMock.errorCode = null;
-    voiceMock.voiceUnavailable = false;
-    voiceMock.start.mockClear();
-    voiceMock.stop.mockClear();
-  });
+describe('NameField — textos de marca base (acceptance #1, #2)', () => {
+  beforeEach(resetRecorder);
+  afterEach(() => vi.clearAllMocks());
 
   it('el placeholder del input viene de la config de marca (cero literal)', () => {
     renderNameField('');
     expect(screen.getByPlaceholderText(brand.text.inputPlaceholder)).toBeInTheDocument();
   });
 
-  it('el botón de voz expone el aria-label de marca (voice.startLabel)', () => {
+  // F11 — el botón de mic (idle) expone el aria-label de arranque de marca.
+  it('el botón de voz expone el aria-label de marca (voice.startLabel) en idle', () => {
     renderNameField('');
     expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
-  });
-
-  it('pulsar el botón de voz arranca el reconocimiento (start)', async () => {
-    const user = userEvent.setup();
-    renderNameField('');
-    await user.click(screen.getByRole('button', { name: brand.voice.startLabel }));
-    expect(voiceMock.start).toHaveBeenCalledTimes(1);
-  });
-
-  it('sin soporte de voz degrada con elegancia: no rompe el formulario (input sigue presente)', () => {
-    voiceMock.isSupported = false;
-    voiceMock.status = 'unsupported';
-    renderNameField('');
-    // El input manual sigue disponible aunque la voz no esté soportada.
-    expect(screen.getByRole('textbox')).toBeInTheDocument();
   });
 });
 
 /**
- * RED — voice_ux. Cablea el resto de la API del hook (`isListening`/`status`/
- * `errorCode`/`stop`) que hoy `NameField` ignora: toggle start↔stop, aria-label
- * conmutado + aria-pressed, indicación de escucha, errores→texto de marca en una
- * región aria-live, y no-soporte comunicado en el botón. Casos 1-15 del design
- * "Criterios de aceptación traducibles a tests". Todo se observa por rol/aria/
- * texto de marca (nunca por clase CSS de color ni string hardcodeado).
+ * RED — flujo grabar→enviar en 2 clics (design §2, F1-F6, F11). El icono "enviar"
+ * es SVG aria-hidden: se afirma por el aria-label/estado del botón, nunca por forma.
  */
-describe('NameField — UX de voz: toggle start↔stop (voice_ux casos 1-4)', () => {
-  beforeEach(() => {
-    voiceMock.status = 'idle';
-    voiceMock.isSupported = true;
-    voiceMock.isListening = false;
-    voiceMock.errorCode = null;
-    voiceMock.voiceUnavailable = false;
-    voiceMock.start.mockClear();
-    voiceMock.stop.mockClear();
-  });
+describe('NameField — flujo grabar→enviar (F1, F3, F11)', () => {
+  beforeEach(resetRecorder);
+  afterEach(() => vi.clearAllMocks());
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  // Caso 1
-  it('idle (isListening=false): pulsar el botón llama start() una vez y no stop()', async () => {
+  // F1 — clic 1 en idle: graba.
+  it('idle: pulsar el botón (startLabel) llama recorder.start() una vez y no stop()', async () => {
     const user = userEvent.setup();
     renderNameField('');
     await user.click(screen.getByRole('button', { name: brand.voice.startLabel }));
-    expect(voiceMock.start).toHaveBeenCalledTimes(1);
-    expect(voiceMock.stop).not.toHaveBeenCalled();
+    expect(recorderMock.start).toHaveBeenCalledTimes(1);
+    expect(recorderMock.stop).not.toHaveBeenCalled();
   });
 
-  // Caso 2
-  it('escuchando (isListening=true): pulsar el botón llama stop() una vez y no start()', async () => {
+  // F3 — clic 2 en recording: para y sube.
+  it('recording: pulsar el botón (listeningLabel) llama recorder.stop() una vez y no start()', async () => {
     const user = userEvent.setup();
-    voiceMock.status = 'listening';
-    voiceMock.isListening = true;
+    recorderMock.status = 'recording';
+    recorderMock.isRecording = true;
     renderNameField('');
     await user.click(screen.getByRole('button', { name: brand.voice.listeningLabel }));
-    expect(voiceMock.stop).toHaveBeenCalledTimes(1);
-    expect(voiceMock.start).not.toHaveBeenCalled();
+    expect(recorderMock.stop).toHaveBeenCalledTimes(1);
+    expect(recorderMock.start).not.toHaveBeenCalled();
   });
 
-  // Caso 3
-  it('escuchando: el botón expone aria-label=listeningLabel y aria-pressed="true"', () => {
-    voiceMock.status = 'listening';
-    voiceMock.isListening = true;
+  // F11 — el botón de mic se renderiza SIEMPRE en idle (ya no se oculta por soporte).
+  it('el botón de mic (startLabel) se renderiza en idle (grabar disponible en todo navegador)', () => {
     renderNameField('');
-    const button = screen.getByRole('button', { name: brand.voice.listeningLabel });
-    expect(button).toHaveAttribute('aria-pressed', 'true');
-  });
-
-  // Caso 4
-  it('idle: el botón expone aria-label=startLabel y aria-pressed="false"', () => {
-    renderNameField('');
-    const button = screen.getByRole('button', { name: brand.voice.startLabel });
-    expect(button).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
   });
 });
 
-describe('NameField — UX de voz: indicación de escucha (voice_ux casos 5-6)', () => {
-  beforeEach(() => {
-    voiceMock.status = 'idle';
-    voiceMock.isSupported = true;
-    voiceMock.isListening = false;
-    voiceMock.errorCode = null;
-    voiceMock.voiceUnavailable = false;
-    voiceMock.start.mockClear();
-    voiceMock.stop.mockClear();
+describe('NameField — el icono/aria refleja el estado del motor (F2, F6)', () => {
+  beforeEach(resetRecorder);
+  afterEach(() => vi.clearAllMocks());
+
+  // F2 — en recording el botón cambia su aria-label a listeningLabel (icono "enviar").
+  it('recording: el botón expone aria-label=listeningLabel (icono enviar), NO startLabel', () => {
+    recorderMock.status = 'recording';
+    recorderMock.isRecording = true;
+    renderNameField('');
+    expect(screen.getByRole('button', { name: brand.voice.listeningLabel })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: brand.voice.startLabel })).not.toBeInTheDocument();
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  // Caso 5
-  it('status=listening: muestra en pantalla el texto de marca listeningLabel', () => {
-    voiceMock.status = 'listening';
-    voiceMock.isListening = true;
+  // F5/F2 — en recording la región de estado (bajo el input) muestra listeningLabel.
+  it('recording: se muestra el texto de marca listeningLabel bajo el input', () => {
+    recorderMock.status = 'recording';
+    recorderMock.isRecording = true;
     renderNameField('');
     expect(screen.getByText(brand.voice.listeningLabel)).toBeInTheDocument();
   });
 
-  // Caso 6
-  it('status=idle: listeningLabel NO está en el documento como texto visible', () => {
+  // F6 — idle sin error: el botón vuelve al startLabel y no hay texto de estado en vivo.
+  it('idle: el botón usa startLabel y el listeningLabel NO está visible', () => {
     renderNameField('');
+    expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
     expect(screen.queryByText(brand.voice.listeningLabel)).not.toBeInTheDocument();
+  });
+
+  // F5/F2 — el botón NO expone aria-pressed (ya no es toggle; design §2).
+  it('el botón de voz NO expone aria-pressed (flujo lineal, no toggle)', () => {
+    renderNameField('');
+    const idleButton = screen.getByRole('button', { name: brand.voice.startLabel });
+    expect(idleButton).not.toHaveAttribute('aria-pressed');
+
+    recorderMock.status = 'recording';
+    recorderMock.isRecording = true;
+    const { rerender } = renderNameField('');
+    rerender();
+    const recButton = screen.getByRole('button', { name: brand.voice.listeningLabel });
+    expect(recButton).not.toHaveAttribute('aria-pressed');
   });
 });
 
-describe('NameField — UX de voz: errores → texto de marca en aria-live (voice_ux casos 7-12)', () => {
+describe('NameField — estado transcribing: aria-busy y bloqueo (F4)', () => {
+  beforeEach(resetRecorder);
+  afterEach(() => vi.clearAllMocks());
+
+  // F4 — transcribing: muestra transcribingLabel, aria-busy y disabled.
+  it('transcribing: muestra voice.transcribingLabel y el botón queda aria-busy="true" y disabled', () => {
+    recorderMock.status = 'transcribing';
+    recorderMock.isTranscribing = true;
+    renderNameField('');
+    expect(screen.getByText(brand.voice.transcribingLabel)).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: brand.voice.transcribingLabel });
+    expect(button).toHaveAttribute('aria-busy', 'true');
+    expect(button).toBeDisabled();
+  });
+
+  // F4 — un clic mientras transcribe no dispara start ni stop.
+  it('transcribing: pulsar el botón NO llama start() ni stop()', async () => {
+    const user = userEvent.setup();
+    recorderMock.status = 'transcribing';
+    recorderMock.isTranscribing = true;
+    renderNameField('');
+    await user.click(screen.getByRole('button', { name: brand.voice.transcribingLabel }));
+    expect(recorderMock.start).not.toHaveBeenCalled();
+    expect(recorderMock.stop).not.toHaveBeenCalled();
+  });
+});
+
+describe('NameField — errores del motor en la región role="status" (F5)', () => {
   beforeEach(() => {
-    voiceMock.status = 'idle';
-    voiceMock.isSupported = true;
-    voiceMock.isListening = false;
-    voiceMock.errorCode = null;
-    voiceMock.voiceUnavailable = false;
-    voiceMock.start.mockClear();
-    voiceMock.stop.mockClear();
+    resetRecorder();
+    recorderMock.status = 'error';
   });
+  afterEach(() => vi.clearAllMocks());
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  // Caso 7
-  it('error not-allowed: la región role="status" muestra voice.permissionDenied', () => {
-    voiceMock.status = 'error';
-    voiceMock.errorCode = 'not-allowed';
+  // F5 — permission-denied → voice.permissionDenied
+  it('permission-denied → voice.permissionDenied en role="status"', () => {
+    recorderMock.errorCode = 'permission-denied';
     renderNameField('');
-    const status = screen.getByRole('status');
-    expect(status).toHaveTextContent(brand.voice.permissionDenied);
+    expect(screen.getByRole('status')).toHaveTextContent(brand.voice.permissionDenied);
   });
 
-  // Caso 8
-  it('error no-speech: la región role="status" muestra voice.noSpeech', () => {
-    voiceMock.status = 'error';
-    voiceMock.errorCode = 'no-speech';
+  // F5 — no-audio → voice.noSpeech
+  it('no-audio → voice.noSpeech en role="status"', () => {
+    recorderMock.errorCode = 'no-audio';
     renderNameField('');
-    const status = screen.getByRole('status');
-    expect(status).toHaveTextContent(brand.voice.noSpeech);
+    expect(screen.getByRole('status')).toHaveTextContent(brand.voice.noSpeech);
   });
 
-  // Caso 9
-  it('error audio-capture: la región role="status" muestra voice.genericError', () => {
-    voiceMock.status = 'error';
-    voiceMock.errorCode = 'audio-capture';
+  // F5 — network → voice.genericError
+  it('network → voice.genericError en role="status"', () => {
+    recorderMock.errorCode = 'network';
     renderNameField('');
-    const status = screen.getByRole('status');
-    expect(status).toHaveTextContent(brand.voice.genericError);
+    expect(screen.getByRole('status')).toHaveTextContent(brand.voice.genericError);
   });
 
-  // Caso 10
-  it('error network: la región role="status" muestra voice.genericError', () => {
-    voiceMock.status = 'error';
-    voiceMock.errorCode = 'network';
+  // F5 — unknown → voice.genericError
+  it('unknown → voice.genericError en role="status"', () => {
+    recorderMock.errorCode = 'unknown';
     renderNameField('');
-    const status = screen.getByRole('status');
-    expect(status).toHaveTextContent(brand.voice.genericError);
+    expect(screen.getByRole('status')).toHaveTextContent(brand.voice.genericError);
   });
 
-  // Caso 11
-  it('error unknown: la región role="status" muestra voice.genericError', () => {
-    voiceMock.status = 'error';
-    voiceMock.errorCode = 'unknown';
+  // F5 — en error el botón vuelve visualmente a idle (startLabel), listo para reintentar.
+  it('error: el botón vuelve al aria-label startLabel (reintento con start)', () => {
+    recorderMock.errorCode = 'network';
     renderNameField('');
-    const status = screen.getByRole('status');
-    expect(status).toHaveTextContent(brand.voice.genericError);
+    expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
   });
+});
 
-  // Caso 12
-  it('idle sin errorCode: ningún texto de error de voz está presente', () => {
+describe('NameField — F6: idle sin error de voz', () => {
+  beforeEach(resetRecorder);
+  afterEach(() => vi.clearAllMocks());
+
+  it('idle: ningún texto de error de voz está presente', () => {
     renderNameField('');
     expect(screen.queryByText(brand.voice.permissionDenied)).not.toBeInTheDocument();
     expect(screen.queryByText(brand.voice.noSpeech)).not.toBeInTheDocument();
@@ -345,62 +338,24 @@ describe('NameField — UX de voz: errores → texto de marca en aria-live (voic
   });
 });
 
-describe('NameField — UX de voz: no-soporte (voice_ux casos 13-14, actualizados por voice_universal)', () => {
-  beforeEach(() => {
-    voiceMock.status = 'idle';
-    voiceMock.isSupported = true;
-    voiceMock.isListening = false;
-    voiceMock.errorCode = null;
-    voiceMock.voiceUnavailable = false;
-    voiceMock.start.mockClear();
-    voiceMock.stop.mockClear();
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  // Caso 13 — REGRESIÓN (cambio de spec voice_universal / ADR 22, aprobada por el
-  // usuario: de "ocultar el mic" a DEGRADACIÓN FUNCIONAL). Antes (voice_reliability):
-  // sin soporte NO se renderizaba botón de mic. Ahora: sin soporte el mic SÍ se
-  // renderiza (con el startLabel de marca) y opera el fallback de Groq. Que sea el
-  // FALLBACK quien se dispara (y no el nativo) lo verifica N1 en
-  // NameField.fallback.test.tsx; aquí solo se afirma la presencia del botón.
-  it('sin soporte: el botón de mic SÍ se renderiza (startLabel de marca) para el fallback', () => {
-    voiceMock.isSupported = false;
-    voiceMock.status = 'unsupported';
-    renderNameField('');
-    expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
-  });
-
-  // Caso 14 — se mantiene: el formulario no se rompe, el input manual sigue disponible.
-  it('sin soporte: el textbox sigue presente (formulario no roto)', () => {
-    voiceMock.isSupported = false;
-    voiceMock.status = 'unsupported';
-    renderNameField('');
-    expect(screen.getByRole('textbox')).toBeInTheDocument();
-  });
-});
-
 /**
- * Caso 15 — regresión white-label. Todas las aserciones anteriores de voice_ux ya
- * afirman contra `brand.voice.*` (nunca contra strings hardcodeados). Este test lo
- * blinda explícitamente: renderiza con OTRA marca (defaults del schema, textos de
- * voz distintos a los del seed shopinbaz) y comprueba que el botón y la región de
- * error se observan por los textos de ESA marca. Si el componente hardcodeara un
- * literal, este test —con textos de marca diferentes— fallaría.
+ * F10 — regresión white-label. Con OTRA marca (textos de voz distintos a los del
+ * seed shopinbaz), el aria-label, la etiqueta de estado y el texto de error se
+ * observan por los textos de ESA marca; los de shopinbaz no se filtran. Si el
+ * componente hardcodeara un literal, este test —con textos de marca diferentes—
+ * fallaría.
  */
-describe('NameField — UX de voz: cero literal / white-label (voice_ux caso 15)', () => {
+describe('NameField — white-label / cero literal (F10)', () => {
   const otherBrand = parseBrandConfig({
     key: 'otra',
     name: 'Otra',
     voice: {
       startLabel: 'Habla tu nombre aquí',
       listeningLabel: 'Te estamos oyendo',
+      transcribingLabel: 'Procesando tu voz (otra marca)',
       permissionDenied: 'Micrófono bloqueado por la otra marca',
       noSpeech: 'No captamos audio (otra marca)',
       genericError: 'Fallo de dictado (otra marca)',
-      unsupported: 'Voz no disponible aquí (otra marca)',
     },
   });
 
@@ -412,146 +367,34 @@ describe('NameField — UX de voz: cero literal / white-label (voice_ux caso 15)
     );
   }
 
-  beforeEach(() => {
-    voiceMock.status = 'idle';
-    voiceMock.isSupported = true;
-    voiceMock.isListening = false;
-    voiceMock.errorCode = null;
-    voiceMock.voiceUnavailable = false;
-    voiceMock.start.mockClear();
-    voiceMock.stop.mockClear();
-  });
+  beforeEach(resetRecorder);
+  afterEach(() => vi.clearAllMocks());
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('el aria-label de arranque proviene de la marca activa (no de un literal)', () => {
+  it('idle: el aria-label de arranque proviene de la marca activa (no de un literal)', () => {
     renderWithBrand(otherBrand);
     expect(screen.getByRole('button', { name: otherBrand.voice.startLabel })).toBeInTheDocument();
+    // No se filtra el startLabel de la marca del seed (shopinbaz).
+    expect(screen.queryByRole('button', { name: brand.voice.startLabel })).not.toBeInTheDocument();
   });
 
-  it('la etiqueta de escucha proviene de la marca activa', () => {
-    voiceMock.status = 'listening';
-    voiceMock.isListening = true;
+  it('recording: la etiqueta de escucha proviene de la marca activa', () => {
+    recorderMock.status = 'recording';
+    recorderMock.isRecording = true;
     renderWithBrand(otherBrand);
     expect(screen.getByText(otherBrand.voice.listeningLabel)).toBeInTheDocument();
   });
 
-  it('el texto de error proviene de la marca activa', () => {
-    voiceMock.status = 'error';
-    voiceMock.errorCode = 'not-allowed';
+  it('transcribing: la etiqueta de proceso proviene de la marca activa', () => {
+    recorderMock.status = 'transcribing';
+    recorderMock.isTranscribing = true;
+    renderWithBrand(otherBrand);
+    expect(screen.getByText(otherBrand.voice.transcribingLabel)).toBeInTheDocument();
+  });
+
+  it('error: el texto de error proviene de la marca activa', () => {
+    recorderMock.status = 'error';
+    recorderMock.errorCode = 'permission-denied';
     renderWithBrand(otherBrand);
     expect(screen.getByRole('status')).toHaveTextContent(otherBrand.voice.permissionDenied);
-  });
-
-  // REGRESIÓN (voice_universal / ADR 22): el no-soporte ya no oculta el mic, lo
-  // DEGRADA al fallback. El white-label del no-soporte se conserva: con otra marca
-  // sin soporte, el botón de mic SÍ se renderiza y su aria-label proviene del
-  // startLabel de ESA marca (no de un literal ni del startLabel de shopinbaz).
-  it('sin soporte: el botón de mic usa el startLabel de la marca activa (white-label del fallback)', () => {
-    voiceMock.isSupported = false;
-    voiceMock.status = 'unsupported';
-    renderWithBrand(otherBrand);
-    expect(screen.getByRole('button', { name: otherBrand.voice.startLabel })).toBeInTheDocument();
-    // Sigue sin filtrar el startLabel de la marca del seed (shopinbaz).
-    expect(screen.queryByRole('button', { name: brand.voice.startLabel })).not.toBeInTheDocument();
-  });
-});
-
-/**
- * RED — voice_reliability (bloque B). Deriva de
- * `progress/voice_reliability/design.md` → "(B) Tests de NameField" y sus
- * "Criterios de aceptación traducibles a tests".
- *
- * Fallan hasta que NameField: (B11) NO renderice el botón de mic si !isSupported;
- * (B12) lo oculte también si voiceUnavailable (latch de network); (B13) lo
- * muestre en el caso normal (regresión de no ocultar de más); (B14) comunique el
- * no-speech sintético por la región role="status" con voice.noSpeech; (B15)
- * recorte a 15 cada emisión de voz (parcial o final) antes de onChange. Todo se
- * observa por rol/aria/texto de marca (nunca por clase CSS ni literal).
- */
-describe('NameField — voice_universal: el mic degrada al fallback (B11, B12, B13)', () => {
-  beforeEach(() => {
-    voiceMock.status = 'idle';
-    voiceMock.isSupported = true;
-    voiceMock.isListening = false;
-    voiceMock.errorCode = null;
-    voiceMock.voiceUnavailable = false;
-    voiceMock.start.mockClear();
-    voiceMock.stop.mockClear();
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  // Caso B11 — REGRESIÓN (voice_universal / ADR 22): antes (voice_reliability) el
-  // mic NO se renderizaba si !isSupported. Ahora SÍ se renderiza (con el startLabel
-  // de marca) y opera el fallback; el textbox sigue presente. Que sea el fallback
-  // quien se dispara lo verifica N1 en NameField.fallback.test.tsx.
-  it('!isSupported: el botón de mic (startLabel) SÍ está para el fallback y el textbox sigue presente', () => {
-    voiceMock.isSupported = false;
-    voiceMock.status = 'unsupported';
-    renderNameField('');
-    expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
-    expect(screen.getByRole('textbox')).toBeInTheDocument();
-  });
-
-  // Caso B12 — REGRESIÓN (voice_universal / ADR 22): antes el mic se OCULTABA tras
-  // un 'network' (voiceUnavailable, p.ej. Brave). Ahora el mic SÍ se muestra y cae
-  // al fallback de Groq; textbox y contador siguen. Que dispare el fallback y no el
-  // nativo lo verifica N2 en NameField.fallback.test.tsx.
-  it('voiceUnavailable=true (Brave): el botón de mic SÍ está para el fallback; textbox y contador siguen', () => {
-    voiceMock.isSupported = true;
-    voiceMock.voiceUnavailable = true;
-    renderNameField('Ana');
-    expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
-    expect(screen.getByRole('textbox')).toBeInTheDocument();
-    expect(screen.getByText('3/15 caracteres')).toBeInTheDocument();
-  });
-
-  // Caso B13 — se mantiene: en el caso normal (nativo disponible) el mic también se
-  // muestra. Que use el hook NATIVO (no el fallback) lo verifica N3.
-  it('caso normal (isSupported=true, voiceUnavailable=false): el botón de mic startLabel está presente', () => {
-    renderNameField('');
-    expect(screen.getByRole('button', { name: brand.voice.startLabel })).toBeInTheDocument();
-  });
-});
-
-describe('NameField — voice_reliability: aviso no-speech y clamp de parciales (B14, B15)', () => {
-  beforeEach(() => {
-    voiceMock.status = 'idle';
-    voiceMock.isSupported = true;
-    voiceMock.isListening = false;
-    voiceMock.errorCode = null;
-    voiceMock.voiceUnavailable = false;
-    voiceMock.start.mockClear();
-    voiceMock.stop.mockClear();
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  // Caso B14 — el no-speech (real o sintético) se comunica por role="status" con voice.noSpeech.
-  it('errorCode="no-speech": la región role="status" muestra voice.noSpeech', () => {
-    voiceMock.status = 'error';
-    voiceMock.errorCode = 'no-speech';
-    renderNameField('');
-    expect(screen.getByRole('status')).toHaveTextContent(brand.voice.noSpeech);
-  });
-
-  // Caso B15 — cada emisión de voz (parcial o final) se recorta a 15 antes de onChange.
-  it('interim rellena con clamp: "Ju" propaga tal cual; un parcial >15 se recorta a 15', () => {
-    const { onChange } = renderNameField('');
-
-    voiceMock.onResult?.('Ju');
-    expect(onChange).toHaveBeenCalledWith('Ju');
-
-    voiceMock.onResult?.('JuanNombreLarguísimoDeMás');
-    const last = onChange.mock.calls.at(-1)?.[0] as string;
-    expect(last.length).toBe(15);
-    expect(last).toBe('JuanNombreLargu'); // exactamente 15 chars
   });
 });

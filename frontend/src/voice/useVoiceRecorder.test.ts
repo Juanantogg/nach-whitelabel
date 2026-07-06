@@ -1,11 +1,15 @@
 /**
- * Tests RED — voice/useVoiceFallback (captura de audio + transcripción por IA).
- * Feature voice_universal, design §5.4 (H1-H7).
+ * Tests RED — voice/useVoiceRecorder (motor de voz ÚNICO: captura de audio +
+ * transcripción por Groq). Feature voice_groq_default, design §5.1 (R1-R7).
  *
- * Hook hermano de `useVoiceInput` (fuera de cualquier Provider). Captura audio con
- * `getUserMedia`/`MediaRecorder`, al parar sube el Blob vía `transcribeVoice` y
- * expone una máquina de estados análoga a la del hook nativo para que la UI no
- * distinga la fuente:
+ * Este archivo es el RENOMBRADO de `useVoiceFallback.test.ts` (ADR 23: Groq pasa a
+ * ser el motor único; el hook `useVoiceFallback` se renombra a `useVoiceRecorder`
+ * sin cambios de lógica). Símbolos actualizados: `useVoiceFallback` →
+ * `useVoiceRecorder`; tipos `FallbackStatus` → `RecorderStatus`, `FallbackErrorCode`
+ * → `RecorderErrorCode`, `UseVoiceFallback*` → `UseVoiceRecorder*`.
+ *
+ * El motor captura audio con `getUserMedia`/`MediaRecorder`, al parar sube el Blob
+ * vía `transcribeVoice` y expone la máquina de estados:
  *   status: 'idle' | 'recording' | 'transcribing' | 'error'
  *   isRecording, isTranscribing, errorCode, start(), stop()
  *   errorCode ∈ 'permission-denied' | 'no-audio' | 'network' | 'unknown' | null
@@ -13,20 +17,21 @@
  * Se mockea el BORDE del sistema: `navigator.mediaDevices.getUserMedia` y la clase
  * `MediaRecorder` (jsdom no las trae). `transcribeVoice` se INYECTA por opción
  * (`transcribe`) para no tocar la red. La máquina de estados bajo prueba NO se
- * mockea. Timers falsos para el auto-stop (H6).
+ * mockea. Timers falsos para el auto-stop (R6).
  *
- * DECISIÓN del tester para H5 (silencio): el diseño acepta cualquiera de las dos
- * opciones (errorCode 'no-audio' con estado error, o onResult('') + aviso). Aquí
- * se elige **'no-audio' + status 'error'**, para que NameField reuse el aviso
- * `voice.noSpeech` por el mismo canal que los demás errores (design §3.3), sin
- * ensuciar el estado del nombre con una cadena vacía.
+ * DECISIÓN del tester para R5 (silencio): errorCode 'no-audio' con estado error,
+ * para que NameField reuse el aviso `voice.noSpeech` por el mismo canal que los
+ * demás errores (design §2.1), sin ensuciar el estado del nombre con una cadena
+ * vacía.
  *
- * RED esperado: `./useVoiceFallback` aún no existe → el import falla y todos los
- * tests quedan en rojo por "módulo ausente".
+ * RED esperado: `./useVoiceRecorder` aún no existe (el implementer renombra el .ts
+ * en el GREEN) → el import falla y todos los tests quedan en rojo por "módulo
+ * ausente". Es un RED puro por renombre: la lógica es la misma que ya pasaba con
+ * `useVoiceFallback`.
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useVoiceFallback } from './useVoiceFallback';
+import { useVoiceRecorder } from './useVoiceRecorder';
 import { ApiError } from '../api/apiError';
 
 /** Track de media falso que registra si se liberó (`stop()`). */
@@ -124,13 +129,13 @@ function flush(): Promise<void> {
 
 const noop = (): void => {};
 
-describe('useVoiceFallback — captura y transcripción (H1, H2)', () => {
+describe('useVoiceRecorder — captura y transcripción (R1, R2)', () => {
   beforeEach(installMediaMocks);
   afterEach(uninstallMediaMocks);
 
-  it('H1 start() pide getUserMedia({ audio: true }) y arranca el recorder → status "recording", isRecording true', async () => {
+  it('R1 start() pide getUserMedia({ audio: true }) y arranca el recorder → status "recording", isRecording true', async () => {
     const transcribe = makeTranscribe();
-    const { result } = renderHook(() => useVoiceFallback({ onResult: noop, transcribe }));
+    const { result } = renderHook(() => useVoiceRecorder({ onResult: noop, transcribe }));
 
     await act(async () => {
       result.current.start();
@@ -145,10 +150,10 @@ describe('useVoiceFallback — captura y transcripción (H1, H2)', () => {
     expect(result.current.isRecording).toBe(true);
   });
 
-  it('H2 stop() ensambla el blob, pasa a "transcribing", llama a transcribe y al resolver "Ana" invoca onResult y vuelve a "idle"', async () => {
+  it('R2 stop() ensambla el blob, pasa a "transcribing", llama a transcribe y al resolver "Ana" invoca onResult y vuelve a "idle"', async () => {
     const onResult = vi.fn();
     const transcribe = makeTranscribe('Ana');
-    const { result } = renderHook(() => useVoiceFallback({ onResult, transcribe }));
+    const { result } = renderHook(() => useVoiceRecorder({ onResult, transcribe }));
 
     await act(async () => {
       result.current.start();
@@ -172,16 +177,16 @@ describe('useVoiceFallback — captura y transcripción (H1, H2)', () => {
   });
 });
 
-describe('useVoiceFallback — errores (H3, H4, H5)', () => {
+describe('useVoiceRecorder — errores (R3, R4, R5)', () => {
   beforeEach(installMediaMocks);
   afterEach(uninstallMediaMocks);
 
-  it('H3 getUserMedia rechaza (permiso denegado) → errorCode "permission-denied", status "error"', async () => {
+  it('R3 getUserMedia rechaza (permiso denegado) → errorCode "permission-denied", status "error"; sin micrófono abierto', async () => {
     getUserMediaMock.mockRejectedValue(
       Object.assign(new Error('denied'), { name: 'NotAllowedError' }),
     );
     const transcribe = makeTranscribe();
-    const { result } = renderHook(() => useVoiceFallback({ onResult: noop, transcribe }));
+    const { result } = renderHook(() => useVoiceRecorder({ onResult: noop, transcribe }));
 
     await act(async () => {
       result.current.start();
@@ -194,10 +199,10 @@ describe('useVoiceFallback — errores (H3, H4, H5)', () => {
     expect(transcribe).not.toHaveBeenCalled();
   });
 
-  it('H4 transcribe rechaza con ApiError(0) → errorCode "network", status "error"', async () => {
+  it('R4 transcribe rechaza con ApiError(0) → errorCode "network", status "error"', async () => {
     const transcribe = vi.fn<TranscribeFn>(() => Promise.reject(new ApiError('sin conexión', 0)));
     const onResult = vi.fn();
-    const { result } = renderHook(() => useVoiceFallback({ onResult, transcribe }));
+    const { result } = renderHook(() => useVoiceRecorder({ onResult, transcribe }));
 
     await act(async () => {
       result.current.start();
@@ -214,10 +219,10 @@ describe('useVoiceFallback — errores (H3, H4, H5)', () => {
     expect(onResult).not.toHaveBeenCalled();
   });
 
-  it('H5 transcribe resuelve "" (silencio) → errorCode "no-audio", status "error" y NO se propaga vacío a onResult', async () => {
+  it('R5 transcribe resuelve "" (silencio) → errorCode "no-audio", status "error" y NO se propaga vacío a onResult', async () => {
     const onResult = vi.fn();
     const transcribe = makeTranscribe('');
-    const { result } = renderHook(() => useVoiceFallback({ onResult, transcribe }));
+    const { result } = renderHook(() => useVoiceRecorder({ onResult, transcribe }));
 
     await act(async () => {
       result.current.start();
@@ -236,7 +241,7 @@ describe('useVoiceFallback — errores (H3, H4, H5)', () => {
   });
 });
 
-describe('useVoiceFallback — auto-stop y limpieza (H6, H7)', () => {
+describe('useVoiceRecorder — auto-stop y limpieza (R6, R7)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     installMediaMocks();
@@ -246,9 +251,9 @@ describe('useVoiceFallback — auto-stop y limpieza (H6, H7)', () => {
     vi.useRealTimers();
   });
 
-  it('H6 auto-stop tras MAX_RECORDING_MS detiene la grabación y dispara la transcripción', async () => {
+  it('R6 auto-stop tras MAX_RECORDING_MS detiene la grabación y dispara la transcripción', async () => {
     const transcribe = makeTranscribe('Ana');
-    const { result } = renderHook(() => useVoiceFallback({ onResult: noop, transcribe }));
+    const { result } = renderHook(() => useVoiceRecorder({ onResult: noop, transcribe }));
 
     await act(async () => {
       result.current.start();
@@ -257,7 +262,7 @@ describe('useVoiceFallback — auto-stop y limpieza (H6, H7)', () => {
     expect(result.current.status).toBe('recording');
 
     const inst = MockMediaRecorder.lastInstance!;
-    // Avanza más allá del tope de grabación (~10 s, design §2.2). Se usa un valor
+    // Avanza más allá del tope de grabación (~10 s, design §4.2). Se usa un valor
     // holgado para no acoplarse a la constante exacta: 30 s cubre cualquier tope
     // razonable del diseño.
     await act(async () => {
@@ -269,9 +274,9 @@ describe('useVoiceFallback — auto-stop y limpieza (H6, H7)', () => {
     expect(inst.stop).toHaveBeenCalled();
   });
 
-  it('H7 cleanup en unmount libera los tracks del stream', async () => {
+  it('R7 cleanup en unmount libera los tracks del stream', async () => {
     const transcribe = makeTranscribe();
-    const { result, unmount } = renderHook(() => useVoiceFallback({ onResult: noop, transcribe }));
+    const { result, unmount } = renderHook(() => useVoiceRecorder({ onResult: noop, transcribe }));
 
     await act(async () => {
       result.current.start();
