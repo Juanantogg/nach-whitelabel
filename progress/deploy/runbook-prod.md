@@ -200,3 +200,49 @@ aws s3 cp dist/index.html s3://prod-front.garcia3apps.com/index.html --cache-con
 - **Atlas:** clusters SEPARADOS por empresa (ADR 11 + 20), no se reusa el de dev.
 - **DNS:** los CNAME de backend (`api-elektra`, `api-shopinbaz`) son cortos → sin el problema
   de los 60 chars de Namecheap que tuvo el dominio custom de App Runner en dev (§7.7).
+
+---
+
+## Pipeline CI/CD (ADR 21 / 21.a)
+
+### Flujo de ramas
+```
+feature ─PR→ staging ─PR→ dev ─PR→ main
+           (solo CI)   (deploy dev)  (deploy prod: elektra+shopinbaz)
+```
+- **staging:** integración, solo CI (lint/test/typecheck/audit/gitleaks), SIN deploy.
+- **dev:** push → deploy front dev (por Actions) + backend dev (auto App Runner).
+- **main:** push → deploy front prod + backends elektra/shopinbaz (auto App Runner).
+
+### Branch protection (las 3 ramas)
+`main`, `dev`, `staging`: push directo BLOQUEADO (`enforce_admins`), solo por PR con CI verde
+(`quality` + `secret-scan`), sin force-push ni borrado. Owner único → approvals=0 (el gate es
+el CI, no un 2º revisor). Configurado vía `gh api PUT .../branches/<rama>/protection`.
+
+### Autenticación Actions→AWS: OIDC (sin secretos)
+- **OIDC provider:** `token.actions.githubusercontent.com` en la cuenta.
+- **Rol:** `GitHubActionsNachDeploy`, trust acotado a `repo:Juanantogg/nach-whitelabel` ramas
+  `dev`/`main`. Permisos MÍNIMOS: `s3:sync` a los buckets de front (dev + prod-front) +
+  `cloudfront:CreateInvalidation` a las 2 distros de front. NADA de access keys en el repo.
+
+### Workflows
+- **`ci.yml`:** dispara en push+PR a main/dev/staging (antes solo main). quality + secret-scan.
+- **`deploy-front.yml`:** dispara en push a dev/main. Determina entorno por rama:
+  - dev → build `VITE_APP_ENV=dev VITE_API_URL=api-dev` → bucket dev + invalidar `E2F4MOT22AV6BH`.
+  - main → build `VITE_APP_ENV=prod` (SIN VITE_API_URL, deriva por host) → bucket prod-front + invalidar `EGG76TCOPNRIB`.
+  - Backend NO lo toca (App Runner auto-deploy). Actions pineadas por SHA (ADR 16).
+
+### Gotchas resueltos montando el pipeline
+- **Node 22:** el deploy-front usaba `.nvmrc` (Node 20) pero pnpm 11.10 requiere >=22.13 →
+  el 1er deploy falló en Setup Node. Fix: `node-version: 22` (igual que ci.yml). El OIDC NO
+  era el problema (falló antes del step de credenciales).
+- **commitlint:** el subject del commit no puede empezar en mayúscula (`subject-case`) — "CI"
+  al inicio rompía; usar minúscula.
+- **Divergencia squash + ramas de larga vida:** el squash-merge hace que staging/dev diverjan
+  en SHAs aunque el contenido sea igual → PRs staging→dev dan conflicto espurio. Se reconcilia
+  reseteando staging a dev (unprotect → `push --force` → re-protect). Alternativa a futuro:
+  merge-commits en vez de squash.
+
+### Verificado
+Deploy-front en dev: **todos los steps success** (OIDC, build, S3 sync, CloudFront invalidate);
+`dev.garcia3apps.com` → 200. El pipeline despliega el front automáticamente al mergear a dev.
