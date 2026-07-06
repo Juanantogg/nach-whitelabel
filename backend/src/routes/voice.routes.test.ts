@@ -188,12 +188,10 @@ describe('POST /voice/transcribe — transcripción por IA (service mockeado)', 
     transcribeAudioMock.mockResolvedValue('Ana');
     const app = await appWithGroqKey('sk-test-groq');
 
-    await request(app)
-      .post('/voice/transcribe')
-      .attach('audio', Buffer.from('fake-webm-bytes'), {
-        filename: 'voice.webm',
-        contentType: WEBM_MIME,
-      });
+    await request(app).post('/voice/transcribe').attach('audio', Buffer.from('fake-webm-bytes'), {
+      filename: 'voice.webm',
+      contentType: WEBM_MIME,
+    });
 
     expect(transcribeAudioMock).toHaveBeenCalledTimes(1);
     const arg = transcribeAudioMock.mock.calls[0]?.[0];
