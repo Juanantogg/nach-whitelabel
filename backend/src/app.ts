@@ -10,6 +10,7 @@ import { healthRouter } from './routes/health.routes.js';
 import { cryptoRouter } from './routes/crypto.routes.js';
 import { namesRouter } from './routes/names.routes.js';
 import { voiceRouter } from './routes/voice.routes.js';
+import { recordsRouter } from './routes/records.routes.js';
 
 /**
  * Opciones de CORS: permite solo los orígenes de la allowlist (`env.corsOrigins`)
@@ -53,6 +54,9 @@ export function createApp(): Express {
 
   app.use('/health', healthRouter);
   app.use('/crypto', cryptoRouter);
+  // /records: lectura barata e idempotente (sin coste externo ni escritura), va
+  // SIN rate-limit, coherente con /health y /crypto.
+  app.use('/records', recordsRouter);
 
   // Rate-limit por IP en los endpoints de escritura/coste. Al exceder el límite
   // responde JSON `{ error, message }` (mismo contrato que el resto de la API),

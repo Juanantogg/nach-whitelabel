@@ -197,7 +197,7 @@
         "El nombre mostrado respeta la privacidad acordada en docs/seguridad.md (no exponer datos sensibles de más)",
         "Tests del render del listado (RED antes de implementar)"
       ],
-      "status": "pending",
+      "status": "done",
       "layer": "fullstack",
       "depends_on": ["consecutive_counter", "brand_config"]
     },
