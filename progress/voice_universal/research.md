@@ -152,3 +152,163 @@ si se quiere cero backend, transformers.js — pero ninguna encaja tan "todo-AWS
 - https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/transcribe-app.html — app de transcripción con usuarios autenticados.
 - https://aws.amazon.com/transcribe/pricing/ y https://aws.amazon.com/pm/transcribe/ — precio $0.024/min, free tier 60 min/mes 12 meses, mínimo 15 s.
 - https://github.com/aws-samples/amazon-transcribe-examples — ejemplos oficiales.
+
+---
+
+## Research A vs B (Whisper-backend vs transformers.js)
+
+Verificado el 2026-07-05 contra fuentes primarias (OpenAI, Groq, HuggingFace, MDN, caniuse).
+Cierra la comparativa que quedó abierta: **(A) Whisper vía backend** vs
+**(B) transformers.js en el navegador**. Transcribe sigue descartado (arriba).
+
+### Preguntas
+1. OpenAI/Groq: ¿qué modelo/endpoint de transcripción hoy? ¿Aceptan `webm/opus`
+   de MediaRecorder DIRECTO (sin transcodificar)? Precio 2026, español, latencia.
+2. transformers.js: ¿nombre de paquete vigente? Modelo Whisper para español corto
+   y tamaño real de descarga. WebGPU vs WASM en Firefox/Brave 2026. CSP/CORS del CDN.
+3. Trade-off decisivo para ESTA prueba (backend + Parameter Store ya montados).
+
+### A) Whisper vía backend
+
+**A diferencia de Transcribe, aquí NO hay que transcodificar a PCM.** Tanto OpenAI
+como Groq aceptan **`webm` directamente** en su lista de formatos → el `Blob`
+`audio/webm;codecs=opus` que produce `MediaRecorder` se sube tal cual (multipart).
+Esto elimina de un plumazo la Web Audio API y el troceo de chunks que hacían caro a
+Transcribe. Patrón **batch simple**: graba → un `POST` multipart → texto.
+
+- **OpenAI — modelos y endpoint (2026):** endpoint `POST /v1/audio/transcriptions`.
+  Modelos vigentes: `whisper-1` (legacy, sin streaming), y los nuevos
+  **`gpt-4o-transcribe`** y **`gpt-4o-mini-transcribe`** (soportan `stream=true`).
+  Formatos aceptados textualmente: `mp3, mp4, mpeg, mpga, m4a, wav, webm`.
+  **Límite de subida 25 MB.** Español entre los 99+ idiomas.
+  Fuente: https://developers.openai.com/api/docs/guides/speech-to-text (2026).
+  - **Precio 2026:** `gpt-4o-transcribe` ≈ **$0.006/min**; `gpt-4o-mini-transcribe`
+    ≈ **$0.003/min** (facturado por tokens de audio: mini $1.25/1M in). Un nombre
+    de ≤15 chars dura ~3-5 s → **coste por dictado prácticamente nulo (<$0.0005)**.
+    Fuente: https://developers.openai.com/api/docs/pricing (2026).
+
+- **Groq — alternativa (2026):** mismo endpoint/estilo (compatible OpenAI).
+  Modelos **`whisper-large-v3`** ($0.111/hora) y **`whisper-large-v3-turbo`**
+  (**$0.04/hora**, el recomendado por precio/latencia). Formatos aceptados
+  textualmente: `flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, webm` → **también webm
+  directo**. Máx. 25 MB (free) / 100 MB (dev). Español vía `language: "es"` (mejora
+  precisión y latencia). **Free tier: 2.000 requests/día + 7.200 s de audio/hora**,
+  facturación mínima de 10 s/request. Latencia de Groq es su sello: turbo transcribe
+  clips cortos en **cientos de ms** (mucho más rápido que OpenAI).
+  Fuentes: https://console.groq.com/docs/speech-to-text ,
+  https://console.groq.com/docs/rate-limits ,
+  https://console.groq.com/docs/model/whisper-large-v3-turbo (2026).
+
+- **Complejidad real del endpoint Express:** BAJA. Recibir multipart (multer o
+  `req` en streaming) → reenviar al SDK (`openai` o `groq-sdk`, ambos con
+  `client.audio.transcriptions.create({ file, model, language: 'es' })`) →
+  devolver `{ text }`. **~30-40 líneas** en un controller + una ruta. La API key
+  vive en **Parameter Store** (ya montado), inyectada como env var; **nunca en el
+  bundle**. Encaja con el patrón de secretos existente. Añade **una** dependencia
+  y **un** endpoint al backend — nada de WebSocket, nada stateful.
+
+### B) transformers.js en el navegador
+
+- **Paquete vigente 2026:** el paquete oficial es **`@huggingface/transformers`**
+  (sucesor de `@xenova/transformers`, que queda como legacy). Versión actual **v4**
+  (v3.x fue la que introdujo WebGPU; v4 reescribe el runtime WebGPU en C++). Se usa
+  con `pipeline('automatic-speech-recognition', '<modelo>')`.
+  Fuentes: https://huggingface.co/blog/transformersjs-v3 ,
+  https://github.com/huggingface/transformers.js/releases (2026).
+
+- **Modelo español corto + tamaño real (cuantizado):** los modelos multilingües
+  `Xenova/whisper-tiny` y `Xenova/whisper-base` soportan español (los `.en` NO).
+  Tamaños cuantizados reales: **whisper-tiny ≈ 78 MB**, **whisper-base ≈ 145 MB**.
+  Para un nombre corto en español, `whisper-tiny` (multilingüe) es el mínimo viable,
+  pero tiny tiene precisión notablemente peor que large-v3 en nombres propios.
+  Fuentes: https://huggingface.co/Xenova/whisper-base ,
+  https://huggingface.co/Xenova/whisper-tiny (2026).
+
+- **WebGPU vs WASM en Firefox/Brave 2026 — EL PUNTO CRÍTICO:**
+  - Firefox habilitó WebGPU por defecto en **Windows (v142)** y **macOS Apple
+    Silicon (v147)**, pero en **Linux e Intel-Mac sigue en Nightly** (Mozilla espera
+    Linux "durante 2026"). Es decir, **WebGPU en Firefox NO es universal aún**:
+    depende de SO. Fuentes: https://caniuse.com/webgpu ,
+    https://github.com/gpuweb/gpuweb/wiki/Implementation-Status ,
+    https://web.dev/blog/webgpu-supported-major-browsers (2026).
+  - Brave = Chromium → WebGPU disponible como en Chrome (v113+), aunque Brave puede
+    endurecer fingerprinting; el fallback WASM siempre está disponible.
+  - **Consecuencia:** transformers.js corre en los 4 navegadores porque **cae a WASM**
+    cuando no hay WebGPU. Pero WASM Whisper es **mucho más lento** (segundos–decenas
+    de segundos para un clip corto según CPU) y el usuario de Firefox-en-Linux —justo
+    uno de los navegadores que esta feature quiere arreglar— probablemente NO tendrá
+    WebGPU y sufrirá la ruta WASM lenta.
+
+- **CSP/CORS al descargar el modelo (front en CloudFront):** transformers.js
+  descarga los pesos ONNX del **CDN de HuggingFace** (`huggingface.co` /
+  `cdn-lfs...`). Esto exige que la **CSP del front permita `connect-src`** hacia esos
+  dominios (hoy la CSP no los contempla → habría que ampliarla). El HF CDN sirve CORS
+  correcto, así que la descarga en sí funciona; el riesgo es la CSP propia, no el CORS
+  ajeno. Alternativa: **autoalojar el modelo en S3/CloudFront** y apuntar
+  `env.remoteHost`/`env.remotePathTemplate` a nuestro bucket (evita depender del CDN de
+  HF y mantiene la CSP en dominios propios), a coste de subir 78-145 MB al bucket.
+  Fuente (guía de hosting/env): https://huggingface.co/docs/transformers.js/index (2026).
+
+- **Impacto en bundle y carga inicial:** la librería es pesada (WASM + wrappers ONNX
+  runtime). **Obligatorio lazy-load**: importar `@huggingface/transformers` solo al
+  activar el fallback (dynamic `import()`), nunca en el bundle inicial. Aun así, la
+  **primera transcripción arrastra la descarga del modelo (78-145 MB)** — se cachea en
+  el navegador (Cache API/IndexedDB) para siguientes usos, pero el primer dictado en
+  Firefox/Brave paga esa descarga antes de transcribir nada.
+
+### Trade-off decisivo para ESTA prueba
+
+| Eje | (A) Whisper-backend | (B) transformers.js |
+|---|---|---|
+| Infra nueva | 1 endpoint Express (ya hay backend) | 0 backend |
+| Secreto | API key en Parameter Store (ya montado) | ninguno |
+| Coste/uso | ~nulo (free tier Groq/OpenAI cubre una demo) | $0 |
+| Transcodificar | **NO** (webm directo) | **NO** (webm directo) |
+| 1ª experiencia | POST rápido (Groq: cientos de ms) | descarga 78-145 MB antes del 1er texto |
+| Fiabilidad cross-browser | idéntica en los 4 (es servidor) | **desigual**: WASM lento donde no hay WebGPU (Firefox/Linux) |
+| Bundle front | ~nulo (solo MediaRecorder + fetch) | librería pesada, lazy-load obligatorio |
+| Complejidad | multipart→SDK→texto (~35 líneas) | WebGPU/WASM, CSP del CDN, cache de modelo |
+
+**El factor que rompe el empate:** el objetivo de la feature es arreglar
+**Firefox y Brave**. En (B), justo Firefox-en-Linux (sin WebGPU estable en 2026) cae a
+WASM lento y arrastra una descarga de 78-145 MB — la peor experiencia precisamente en
+el navegador que queremos rescatar. En (A) la transcripción es idéntica y rápida en los
+4 navegadores porque el trabajo lo hace el servidor. Además, la prueba **ya tiene backend
+en App Runner y Parameter Store**: el coste marginal de (A) es un endpoint de ~35 líneas y
+una API key de entorno, exactamente el patrón que el repo ya usa para secretos. (B) no
+aprovecha nada de esa infra y mete a cambio complejidad WASM/WebGPU + CSP + peso.
+
+**Sub-decisión OpenAI vs Groq (dentro de A):** **Groq `whisper-large-v3-turbo`** es
+preferible para esta demo — free tier generoso (2.000 req/día), $0.04/hora, latencia
+menor y misma calidad large-v3 (mejor que tiny de B). OpenAI `gpt-4o-mini-transcribe`
+es alternativa válida y ~igual de simple si ya se tiene cuenta OpenAI. Ambos aceptan
+webm directo. Dejar el proveedor como detalle de `design.md`/ADR (endpoint agnóstico).
+
+### Trampas a evitar
+- **No transcodificar a PCM**: ni OpenAI ni Groq lo requieren (a diferencia de
+  Transcribe). Subir el `Blob` webm/opus de MediaRecorder tal cual.
+- **API key jamás en el bundle**: solo Parameter Store → env var del backend. Auditar
+  en security-auditor (ya exigido por la acceptance de la feature).
+- **Pasar `language: "es"`** al SDK: mejora precisión y latencia en nombres cortos.
+- **Fallback, no reemplazo**: mantener Web Speech nativo en Chrome/Safari (gratis,
+  instantáneo); llamar al backend solo si `isSupported=false` o `errorCode==='network'`.
+- **Límite de 15 chars y clamp**: aplicar sobre el texto devuelto igual que hoy.
+- Si algún día se fuera por (B): lazy-load obligatorio, ampliar CSP `connect-src` al CDN
+  de HF (o autoalojar en S3), y no prometer WebGPU en Firefox/Linux.
+
+### Veredicto para el leader
+**Elegir (A) Whisper vía backend (Groq whisper-large-v3-turbo, o OpenAI gpt-4o-mini-transcribe): webm directo sin transcodificar, ~35 líneas de endpoint, API key en Parameter Store ya montado, coste ~nulo y fiabilidad idéntica en los 4 navegadores — mientras que (B) transformers.js castiga justo a Firefox/Linux (WASM lento + descarga de 78-145 MB) que es el navegador a rescatar.**
+
+### Fuentes (A vs B)
+- https://developers.openai.com/api/docs/guides/speech-to-text — modelos (whisper-1, gpt-4o-transcribe, gpt-4o-mini-transcribe), endpoint, formatos (incluye webm), 25 MB, español, streaming.
+- https://developers.openai.com/api/docs/pricing — $0.006/min (transcribe) y $0.003/min (mini).
+- https://console.groq.com/docs/speech-to-text — whisper-large-v3 / -turbo, formatos (incluye webm), precios $0.111 / $0.04 por hora, español.
+- https://console.groq.com/docs/rate-limits — free tier 2.000 req/día, 7.200 s/hora.
+- https://console.groq.com/docs/model/whisper-large-v3-turbo — modelo turbo, latencia.
+- https://www.npmjs.com/package/@huggingface/transformers — paquete oficial vigente (sucesor de @xenova).
+- https://huggingface.co/blog/transformersjs-v3 — WebGPU en transformers.js v3.
+- https://github.com/huggingface/transformers.js/releases — versiones (v4 runtime WebGPU en C++).
+- https://huggingface.co/Xenova/whisper-tiny y https://huggingface.co/Xenova/whisper-base — modelos multilingües y tamaños (~78 MB / ~145 MB cuantizados).
+- https://caniuse.com/webgpu — soporte WebGPU: Chrome 113+, Safari 26+ parcial, Firefox NO universal en desktop.
+- https://github.com/gpuweb/gpuweb/wiki/Implementation-Status y https://web.dev/blog/webgpu-supported-major-browsers — Firefox WebGPU: Windows (142), macOS Apple Silicon (147), Linux en Nightly durante 2026.
+- https://huggingface.co/docs/transformers.js/index — hosting/env para autoalojar modelo y ejecutar ASR en navegador.

@@ -703,3 +703,227 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
 - **Nota:** al ser owner único, se puede mergear el propio PR; la protección impide el push
   directo y exige el PR + CI, que es lo que se busca (trazabilidad + calidad, no un segundo
   aprobador que no existe).
+
+## 22. Dictado universal: fallback a Whisper vía backend (Groq `whisper-large-v3-turbo`) — feature `voice_universal`
+
+> **⚠️ SUPERSEDIDO en parte por el ADR 23 (2026-07-05).** La arquitectura de *fallback*
+> (nativo preferente + Groq solo en Firefox/Brave) se revierte: Groq pasa a ser el motor
+> ÚNICO. Lo que SIGUE VIGENTE de este ADR: el endpoint `POST /voice/transcribe`, el
+> proveedor Groq `whisper-large-v3-turbo` (webm directo, `language: 'es'`), la gestión de
+> la `GROQ_API_KEY` y el descarte de transformers.js/Transcribe. Ver ADR 23.
+
+- **Contexto (2026-07-05):** el dictado usa la Web Speech API nativa, que funciona en
+  Chrome/Edge/Safari pero NO en Firefox (no implementa la API) ni en Brave (bloquea el
+  servicio de reconocimiento de Google → `errorCode === 'network'`). `voice_reliability`
+  (ADR 14) ya degrada elegante ocultando el micrófono donde no hay forma de dictar. El
+  enunciado (`docs/ExamenPractico_Front.md`) permite explícitamente "APIs nativas, librerías
+  o **servicios de IA**". Se quiere dictado FUNCIONAL en los 4 navegadores. Research completo
+  con fuentes primarias 2026 en `progress/voice_universal/research.md` (sección "Research A vs B").
+
+- **Decisión:** añadir un **fallback** (no un reemplazo) basado en **Whisper vía backend**,
+  proveedor **Groq `whisper-large-v3-turbo`**. El front graba con `MediaRecorder`
+  (`audio/webm;codecs=opus`) y hace un único `POST` multipart a un endpoint propio
+  (`POST /voice/transcribe`); el backend reenvía el `Blob` **sin transcodificar** a Groq (que
+  acepta `webm` directo) con `language: 'es'` y devuelve `{ text }`. La `GROQ_API_KEY` es
+  secreto de entorno (Parameter Store en prod, validado por Zod al boot pero **opcional**:
+  su ausencia no tumba el arranque, solo desactiva el fallback), **nunca en el bundle ni en el
+  repo**. El fallback se activa SOLO cuando el camino nativo no sirve (`isSupported === false`
+  en Firefox, o `voiceUnavailable === true` en Brave); Chrome/Safari siguen con Web Speech
+  nativo. Deps nuevas de backend aprobadas: `groq-sdk` (aísla el proveedor tras el service) y
+  `multer` (parseo multipart con límite de tamaño integrado). Una única clave de texto nueva en
+  el schema de marca: `voice.transcribingLabel` (con `.default()`, ninguna marca edita su JSON).
+
+- **Por qué fallback y no único método (decidido con el usuario, 2026-07-05):** hacer Groq el
+  ÚNICO motor metería una dependencia de red + API key + free tier externo en el camino que hoy
+  es gratis, instantáneo e infalible (Chrome/Safari, la mayoría de evaluadores), con peor
+  latencia (se pierden los parciales en vivo de `interimResults`) y jubilando la UX nativa ya
+  `done` (`voice_ux`, `voice_reliability`). El valor de la feature es **rescatar Firefox/Brave**,
+  y el fallback lo logra sin degradar a nadie más. Usar lo nativo donde funciona y caer al
+  servicio de IA donde no, es la decisión de ingeniería defendible ante el evaluador. La
+  presentación se unifica en `NameField` para que el usuario no perciba qué motor corre debajo.
+
+- **Por qué Groq/Whisper-backend frente a las alternativas:** fiabilidad idéntica en los 4
+  navegadores (el trabajo lo hace el servidor); **sin transcodificar** (Groq acepta webm/opus
+  directo → se elimina la Web Audio API y el troceo PCM que hacía caro a Transcribe); encaja con
+  la infra existente (~35 líneas de endpoint en el backend ya en App Runner, key por el mismo
+  patrón Parameter Store que `CRYPTO_PRIVATE_KEY`); coste ~nulo (free tier Groq 2.000 req/día);
+  latencia de cientos de ms; y el service aísla el proveedor tras `transcribeAudio(...)` →
+  cambiar a OpenAI sería tocar solo ese archivo.
+
+- **Alternativas descartadas** (detalle en `progress/voice_universal/research.md`):
+  - **(B) transformers.js (Whisper WASM/WebGPU en el navegador):** 0 backend y 0 secreto, pero
+    castiga justo a Firefox/Linux (sin WebGPU estable en 2026 → WASM lento) con una descarga de
+    modelo de 78-145 MB antes del primer texto — peor experiencia en el navegador a rescatar — y
+    mete complejidad WASM/WebGPU + ampliación de la CSP para el CDN de HuggingFace.
+  - **Amazon Transcribe (streaming):** descartado antes (2026-07-04, usuario): exige PCM crudo
+    transcodificado + proxy WebSocket de larga duración en App Runner + coste $0.024/min.
+  - **OpenAI `gpt-4o-mini-transcribe`:** alternativa válida y ~igual de simple; Groq gana por
+    free tier más generoso y menor latencia. El endpoint queda agnóstico, así que Groq no cierra
+    la puerta a cambiar de proveedor.
+
+## 23. Groq como motor de voz ÚNICO y flujo grabar→enviar — feature `voice_groq_default` (supersede parte del ADR 22)
+
+- **Contexto (2026-07-05):** el ADR 22 decidió Web Speech nativo como preferente y Groq solo
+  como **fallback** para Firefox/Brave. Probándolo en runtime apareció un defecto de UX del
+  fallback reactivo: en Brave el nativo **arranca**, muere con `error === 'network'`, y solo
+  **la 2ª pulsación** cae a Groq — la 1ª se desperdicia. El problema es estructural: no se puede
+  saber **a priori** si un Chromium tiene el servicio de reconocimiento de Google disponible
+  (Brave lo bloquea, Chrome no), así que la detección solo ocurre **después** de fallar una vez.
+  El "baile" nativo↔fallback es intrínseco a decidir entre dos motores en caliente.
+
+- **Decisión (con el usuario, 2026-07-05):** **Groq pasa a ser el motor de voz único** en los 4
+  navegadores. Se **elimina** `useVoiceInput` (Web Speech) y toda su UX en vivo. El motor de
+  grabación+transcripción (antes `useVoiceFallback`) pasa a ser el **motor principal** y se
+  renombra a `useVoiceRecorder`. La UX del botón cambia a **grabar → enviar en 2 clics**: el icono
+  refleja la acción del PRÓXIMO clic (micrófono para empezar a grabar; icono "enviar" nuevo, SVG
+  inline avión de papel, para parar la grabación y subir el audio a Groq); durante la subida el
+  botón queda ocupado (`aria-busy`) con `voice.transcribingLabel`.
+
+- **Qué se ELIMINA:** `frontend/src/voice/useVoiceInput.ts` y su test; toda la UX nativa en
+  `NameField` (toggle `isListening`, `voiceUnavailable`, `interimResults`, no-speech sintético,
+  ocultar/deshabilitar mic por soporte, `aria-pressed`). Los tests de `voice_ux`/`voice_reliability`
+  que afirman sobre esos comportamientos se retiran con justificación.
+
+- **Qué se CONSERVA sin cambios:** el endpoint backend `POST /voice/transcribe` (Groq, multer,
+  rate-limit), la capa de red `frontend/src/api/transcribeVoice.ts`, y el schema de marca `voice.*`
+  (cero clave nueva: "grabando" reusa `voice.listeningLabel`).
+
+- **Por qué motor único:** el valor de tener dos motores (nativo gratis/instantáneo en Chrome/Safari)
+  no compensa el "baile" de la 1ª pulsación en Brave ni la complejidad de orquestar dos hooks. Un
+  motor único da comportamiento idéntico y predecible en los 4 navegadores; la presentación
+  (grabar→enviar) es explícita y no depende de detectar soporte en caliente.
+
+- **Trade-off aceptado (explícito):** Chrome/Safari **ahora también** dependen de Groq + backend +
+  `GROQ_API_KEY` + red en el camino **común** (antes solo Firefox/Brave). Se pierden los parciales en
+  vivo (`interimResults`) y la latencia sube de ~0 a cientos de ms + red. A cambio: cero baile, un
+  solo camino de código, UX uniforme. Si el backend/Groq caen, el **input manual sigue siendo el
+  camino garantizado** (mitiga el riesgo).
+
+- **Supersede:** la parte del ADR 22 sobre arquitectura de fallback (nativo preferente); las features
+  `voice_ux` y `voice_reliability` (UX nativa completa, ADR 14); y la orquestación nativo↔fallback de
+  `voice_universal`. El endpoint y la decisión Groq/Whisper del ADR 22 siguen vigentes.
+
+## 24. Detección de silencio local (Web Audio API) + auto-envío del dictado — feature `voice_auto_send`
+
+- **Contexto (2026-07-05):** tras `voice_groq_default` (ADR 23), el dictado es grabar→enviar de 2
+  clics con un único auto-stop **por tiempo** (`MAX_RECORDING_MS = 10 s`). Probando en runtime, el
+  usuario detecta el hueco: si pulsas "grabar" y no hablas, a los 10 s se sube un `Blob` vacío/ruido a
+  Groq igualmente (coste, latencia, cero resultado). Y el envío normal exige un 2º clic manual.
+- **Decisión (con el usuario, 2026-07-05):** añadir **detección de silencio local** con la **Web Audio
+  API** (`AudioContext` + `AnalyserNode` sobre el mismo `MediaStream` de `getUserMedia`) al motor
+  `useVoiceRecorder`, con dos efectos: (a) **auto-envío** cuando el usuario habló y luego calló
+  (silencio sostenido `SILENCE_HANG_MS = 1.5 s` tras haber superado el umbral); (b) **corte con aviso
+  `voice.noSpeech` sin subir audio** cuando nunca se habló (`NO_SPEECH_TIMEOUT_MS = 3 s` siempre bajo
+  umbral). El auto-stop por tiempo (10 s) se conserva como red superior; el silencio server-side (Groq
+  `''`→`no-audio`) como segunda red. La detección se parte en `createSilenceDetector` (lógica temporal
+  pura y testeable) + `createAudioLevelMeter` (borde Web Audio, mide RMS normalizado con
+  `getByteTimeDomainData`) + cableado en el motor.
+- **Distinción (a)/(b):** un flag `hasSpoken` (alguna muestra superó `SPEECH_THRESHOLD ≈ 0.06`) separa
+  "auto-enviar" de "no-speech". Sin voz previa el silencio dispara `no-speech`; con voz previa dispara
+  `send` tras la ventana de cuelgue.
+- **Por qué Web Audio API:** soportada en los 4 navegadores (Chrome/Firefox/Safari/Brave), **100%
+  local**, misma familia que `getUserMedia`/`MediaRecorder` que ya funciona; **no depende del servicio
+  de reconocimiento de Google** que rompió el dictado en Brave con Web Speech (ADR 22/23) — no
+  reintroduce ese problema.
+- **Parámetros:** `SPEECH_THRESHOLD`, `SILENCE_HANG_MS`, `NO_SPEECH_TIMEOUT_MS`, `SAMPLE_MS` como
+  **constantes nombradas del motor**, NO en el schema de marca (comportamiento común a todas las marcas,
+  como el límite de 15). Valores iniciales razonables; se **calibran probando** con micrófono real.
+  Invariante: `SILENCE_HANG_MS < NO_SPEECH_TIMEOUT_MS < MAX_RECORDING_MS`.
+- **Privacidad:** el análisis de nivel es local; **nada nuevo** sale del navegador y en el caso "nunca
+  habló" **ya no se sube** audio (menos datos que antes). Exigencia: `AudioContext.close()` y
+  cancelación del bucle de muestreo en toda salida de `recording` (auto-envío, no-speech, stop manual,
+  auto-stop por tiempo, unmount) para no dejar el micrófono vivo.
+- **Descartado:** (1) detección **server-side** como mecanismo primario — no da auto-envío y sube audio
+  vacío; se conserva solo como segunda red. (2) **Librería VAD** (`vad-web` y afines) — dependencia
+  nueva + modelo WASM/ONNX para un problema que un umbral RMS + ventana temporal resuelve sin
+  dependencias; sobredimensionado.
+- **`requires_approval`: false** — UX del frontend; no toca cifrado/claves/contrato/backend, no añade
+  dependencias, reduce datos subidos.
+
+## 25. Límite de nombre fijo en 15 (NO configurable por marca) + feedback de longitud unificado — feature `voice_auto_send`
+
+- **Contexto (2026-07-05):** probando el dictado, el usuario nota que "Jesus Garcia Peralta" se
+  rellena como "Jesus Garcia Pe" (15 chars exactos): el `clampToMax(15)` corta a media palabra, igual
+  que en el teclado, pero en voz el corte sorprende porque no hay feedback claro de que se alcanzó el
+  tope. Surge la pregunta de si el límite de 15 debería ser **configurable por marca**.
+- **Hallazgo de arquitectura:** el "15" está hardcodeado en TRES sitios independientes —
+  `NameField.tsx` (front), `crypto.controller.ts` `MAX_NAME_LENGTH` (validación 400) y
+  `record.model.ts` `maxlength` (defensa Mongo). El schema de marca ya tiene `counterTemplate`
+  con placeholder `{max}`, pero el valor no se lee de config. Además, **el backend NO lee la config de
+  marca** (los JSON de `brand/data`, `brand/seeds` y S3 los consume solo el front); la marca llega al
+  backend de forma implícita por la URL (`api-<key>`, backend aislado por marca en prod, ADR 20).
+- **Decisión (con el usuario, 2026-07-05):** **el límite se mantiene FIJO en 15, NO configurable.**
+  Solo se añade el **feedback de longitud unificado** (UX): cuando el nombre alcanza los 15 caracteres,
+  se muestra un aviso/error de longitud, tanto en escritura manual como en dictado por voz; ambos
+  siguen recortando a 15. El "15" se centraliza en una constante única del front (deja de duplicarse en
+  literales), pero sigue siendo constante, no config de marca.
+- **Por qué NO configurable ahora:** hacerlo bien exigiría que el límite fuese coherente en front Y
+  backend — y como el backend valida `≤15` por su cuenta (defensa, no puede confiar en el cliente),
+  habría que decidir cómo el backend conoce el límite de cada marca de forma segura (env por backend de
+  marca, o que el backend lea su JSON, o que el front lo mande —esto último inseguro—). Es un cambio de
+  arquitectura fullstack con su propia superficie de seguridad, desproporcionado para el tiempo
+  disponible y para un límite que el enunciado fija en 15. Se deja como posible feature futura
+  (`configurable_name_limit`) si se retoma; el placeholder `{max}` del `counterTemplate` ya deja el
+  camino preparado en el front.
+- **`requires_approval`: false** — el límite no cambia (sigue 15 en los 3 sitios); solo se añade
+  feedback de UX en el front. No toca cifrado, validación del backend ni el contrato.
+
+## 26. `records_list`: nombre COMPLETO sin enmascarar (alias voluntario, no PII sensible) — feature `records_list`
+
+- **Contexto (2026-07-05):** la feature `records_list` es un EXTRA fuera del enunciado: una
+  pantalla que lista los registros persistidos (`nombre` + `número consecutivo`) leídos de Mongo,
+  como **evidencia visible de que el contador persiste** (metí "Juan"→42; recargo→sigue 42/Juan).
+  Al mostrar el nombre surge la pregunta de privacidad: `docs/seguridad.md:98-102` exige "no
+  persistir material CRIPTOGRÁFICO" (se respeta: no se guarda ni clave de sesión, ni IV, ni
+  ciphertext) y que `records_list` "respete la privacidad acordada". Se consideró enmascarar el
+  nombre (`J****`, o solo iniciales) por prudencia.
+- **Decisión (con el usuario, 2026-07-05):** se muestra el **NOMBRE COMPLETO, sin enmascarar**.
+- **Por qué:**
+  - Lo persistido **no es PII real**: es un **alias voluntario de ≤15 caracteres** que el usuario
+    teclea o dicta únicamente para el saludo ("¿Cómo prefieres que te llamemos?"). No hay cuentas,
+    login, email, teléfono ni dato que identifique a una persona (ADR 10: sin sistema de usuarios).
+  - Enmascararlo **no aporta seguridad real**: el nombre completo sigue en Mongo en claro
+    (`record.model.ts`); ocultarlo solo en la UI sería **teatro de seguridad**, no un control.
+  - Enmascarar **rompe el propósito** de la pantalla: es una herramienta de verificación del
+    evaluador (comprobar que el nombre que metió se guardó y sobrevive a recargas). `J****` no
+    permite verificar nada.
+  - La exigencia de `seguridad.md` ("respetar la privacidad acordada") se cumple: la privacidad
+    acordada para un alias no sensible voluntario es mostrarlo tal cual; lo que NO se expone es
+    material criptográfico, y eso se respeta.
+- **Alcance de auditoría:** esta feature **NO** dispara `security-auditor` — no toca cifrado,
+  claves ni el contrato de cifrado; solo LEE registros ya persistidos por `consecutive_counter`.
+  `GET /records` no descifra nada ni expone secretos.
+- **Descartado:**
+  - **Enmascarar (`J****`):** teatro de seguridad (el dato sigue en claro en Mongo), y rompe la
+    verificación que es el fin de la pantalla.
+  - **Solo iniciales:** mismo problema, con menos utilidad aún para el evaluador.
+
+## 27. `records_list`: React Router con ruta `/records` no listada (herramienta del evaluador, no control de acceso) — feature `records_list`
+
+- **Contexto (2026-07-05):** hasta ahora el front renderiza una sola pantalla (`App` → `WelcomeScreen`,
+  sin router). `records_list` añade una **segunda pantalla** (el listado). Hay que decidir cómo se
+  navega a ella y si debe ser visible.
+- **Decisión (con el usuario, 2026-07-05):**
+  - Se introduce **`react-router-dom`** (última estable) con dos rutas: **`/` → `WelcomeScreen`** y
+    **`/records` → `RecordsList`**.
+  - **`/records` NO tiene ningún enlace visible** en la UI (ni `<Link>`, ni botón, ni toggle): es una
+    **herramienta del evaluador** accesible **solo escribiendo la URL directamente**.
+- **IMPORTANTE — URL no listada ≠ URL protegida:** que la ruta no aparezca en la UI es **discreción,
+  no control de acceso**. El endpoint `GET /records` es **público**: cualquiera que conozca o adivine
+  `/records` entra y ve los registros. No hay auth porque no hay sistema de usuarios (ADR 10) y los
+  datos no son sensibles (ADR 26, alias voluntarios). Esto se documenta explícitamente para no dar la
+  falsa impresión de que "no listar" protege algo.
+- **Por qué:**
+  - Un router es la forma estándar y escalable de tener más de una pantalla; `react-router-dom` es la
+    librería de facto en React, mantenida y con tipos. La dependencia nueva se justifica aquí (dos
+    pantallas reales), no es bloat.
+  - No listar `/records` mantiene la pantalla de bienvenida **limpia y fiel a las maquetas** (que no
+    muestran ningún enlace a un listado), sin inventar UI que el enunciado no pide, mientras deja al
+    evaluador una vía directa para comprobar la persistencia.
+- **Descartado:**
+  - **Mostrar el listado tras generar (sin router, con estado):** mezcla dos responsabilidades en una
+    pantalla y ensucia el flujo core de bienvenida; un router separa limpio las dos vistas.
+  - **Toggle/enlace siempre visible a `/records`:** añade UI fuera de las maquetas y del enunciado; el
+    listado es instrumento de verificación, no una feature de producto para el usuario final.
+  - **Proteger `/records` con auth:** no hay sistema de usuarios (ADR 10) y los datos no son sensibles
+    (ADR 26); montar auth para esto sería scope injustificado.

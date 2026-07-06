@@ -7,7 +7,7 @@
 version: 1.0
 
 # Único runtime Node vivo en App Runner (no existe nodejs20; 18/16 están EOS).
-# nodejs22 satisface engines.node ">=20" del repo. Usa la "revised build".
+# nodejs22 satisface engines.node ">=22.13" del repo. Usa la "revised build".
 runtime: nodejs22
 
 build:

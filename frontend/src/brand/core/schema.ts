@@ -38,6 +38,10 @@ export const brandConfigSchema = z
         inputPlaceholder: z.string().default('Escribe tu nombre'),
         submitLabel: z.string().default('Comenzar'),
         counterTemplate: z.string().default('{count}/{max} caracteres'),
+        // Aviso unificado (teclado y voz) cuando el nombre llega al tope de 15
+        // (ADR 25). Interpola {max} igual que counterTemplate. Con `.default()`
+        // ninguna marca existente edita su JSON (marca nueva = un JSON).
+        maxLengthReached: z.string().default('Máximo {max} caracteres'),
         // Textos del flujo de welcome_screen que las maquetas no muestran
         // (solo capturan el estado inicial). Con `.default()` por campo se
         // mantiene el principio "marca nueva = un JSON" sin tocar componentes.
@@ -46,6 +50,19 @@ export const brandConfigSchema = z
         errorGeneric: z.string().default('No pudimos procesarlo. Inténtalo de nuevo.'),
         errorNetwork: z.string().default('Sin conexión. Revisa tu internet e inténtalo.'),
         retryLabel: z.string().default('Reintentar'),
+        // Textos de la pantalla EXTRA de listado de registros (`/records`, ADR
+        // 26/27). Sub-bloque propio con `.prefault({})` y `.default()` por campo:
+        // marca nueva = un JSON, ninguna marca existente edita el suyo.
+        records: z
+          .object({
+            title: z.string().default('Registros generados'),
+            nameHeader: z.string().default('Nombre'),
+            numberHeader: z.string().default('Número'),
+            loading: z.string().default('Cargando registros…'),
+            error: z.string().default('No pudimos cargar los registros. Inténtalo de nuevo.'),
+            empty: z.string().default('Aún no hay registros generados.'),
+          })
+          .prefault({}),
       })
       .prefault({}),
 
@@ -84,6 +101,10 @@ export const brandConfigSchema = z
         startLabel: z.string().default('Dictar mi nombre'),
         // Etiqueta mientras escucha (para el toggle del botón).
         listeningLabel: z.string().default('Escuchando…'),
+        // Etiqueta mientras se transcribe el audio del fallback por IA (Firefox/
+        // Brave). Estado sin equivalente en el flujo nativo. Con `.default()`
+        // ninguna marca existente edita su JSON (marca nueva = un JSON).
+        transcribingLabel: z.string().default('Transcribiendo…'),
         // Errores mostrables (la UI decide cuáles enseñar).
         permissionDenied: z
           .string()
