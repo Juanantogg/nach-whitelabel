@@ -208,3 +208,47 @@ describe('brandConfigSchema — voice.transcribingLabel (voice_universal, SC1)',
     expect(config.voice.transcribingLabel).toBe('Convirtiendo tu voz…');
   });
 });
+
+/**
+ * RED — feedback de longitud al límite (voice_auto_send, ADR 25). Cuando el
+ * nombre alcanza el tope FIJO de 15 (por teclado o por dictado, ambos recortan a
+ * 15), la UI muestra un aviso de marca. Se añade UNA sola clave nueva al bloque
+ * `text`: `maxLengthReached`, con `.default('Máximo {max} caracteres')` para que
+ * ninguna marca existente edite su JSON (principio "marca nueva = un JSON").
+ *
+ * RED: falla hasta que el implementer añada `text.maxLengthReached` al schema. Se
+ * prueba el MECANISMO (existencia + default no vacío + placeholder {max} presente
+ * + JSON que lo omite sigue válido), no el copy exacto: la fuente de verdad del
+ * default es `parseBrandConfig({}).text.maxLengthReached`.
+ */
+describe('brandConfigSchema — text.maxLengthReached (voice_auto_send, ADR 25)', () => {
+  it('parseBrandConfig({}) produce text.maxLengthReached con un default no vacío', () => {
+    const config = parseBrandConfig({});
+
+    expect(config.text.maxLengthReached).toBeDefined();
+    expect(typeof config.text.maxLengthReached).toBe('string');
+    expect(config.text.maxLengthReached.length).toBeGreaterThan(0);
+  });
+
+  it('el default de maxLengthReached contiene el placeholder {max} (reusa el patrón de counterTemplate)', () => {
+    const config = parseBrandConfig({});
+    expect(config.text.maxLengthReached).toContain('{max}');
+  });
+
+  it('un JSON de marca que OMITE maxLengthReached sigue siendo válido y rellena el default', () => {
+    const defaults = parseBrandConfig({});
+    // JSON de marca con otros textos pero SIN maxLengthReached.
+    const config = parseBrandConfig({ text: { title: 'Hola' } });
+
+    expect(config.text.title).toBe('Hola');
+    // El campo omitido cae al default del schema (no un literal).
+    expect(config.text.maxLengthReached).toBe(defaults.text.maxLengthReached);
+    // Los demás campos previos de text quedan intactos → marca usable.
+    expect(config.text.counterTemplate).toBe(defaults.text.counterTemplate);
+  });
+
+  it('conserva un maxLengthReached provisto por la marca (white-label)', () => {
+    const config = parseBrandConfig({ text: { maxLengthReached: 'Tope: {max} letras' } });
+    expect(config.text.maxLengthReached).toBe('Tope: {max} letras');
+  });
+});

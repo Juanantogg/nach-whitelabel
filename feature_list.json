@@ -300,6 +300,29 @@
       "status": "done",
       "layer": "frontend",
       "depends_on": ["voice_universal"]
+    },
+    {
+      "name": "voice_auto_send",
+      "title": "Auto-envío del dictado por detección de silencio (Web Audio API)",
+      "description": "Mejora de UX detectada por el usuario probando voice_groq_default en runtime: el flujo grabar→enviar solo tenía auto-stop por TIEMPO (10s), no por silencio, así que arrancar sin hablar subía audio vacío a Groq igual. Esta feature añade detección de silencio LOCAL con la Web Audio API (AudioContext+AnalyserNode sobre el MediaStream) al motor useVoiceRecorder: (a) auto-ENVÍA cuando el usuario habló y luego calló; (b) si nunca se habló, corta y avisa voice.noSpeech SIN subir audio. Web Audio está soportada en los 4 navegadores y es local (no depende del servicio de Google), no reintroduce el problema de Brave. Ver ADR 24.",
+      "requires_approval": false,
+      "decisions": [
+        "Detección vía Web Audio API (AudioContext+AnalyserNode, RMS con getByteTimeDomainData), 100% local, soportada en Chrome/Firefox/Safari/Brave. Misma familia que getUserMedia/MediaRecorder ya en uso; NO usa Web Speech (que rompía Brave).",
+        "Arquitectura: createSilenceDetector (lógica temporal PURA y testeable) + createAudioLevelMeter (borde Web Audio) + cableado en useVoiceRecorder. Sin nuevos estados de máquina, sin texto nuevo, sin deps, backend y transcribeVoice intactos.",
+        "Dos casos vía flag hasSpoken: (a) habló y calló SILENCE_HANG_MS≈1.5s → auto-envía (mismo camino del 2º clic); (b) nunca habló NO_SPEECH_TIMEOUT_MS≈3s bajo umbral → corta y avisa voice.noSpeech SIN subir. Invariante 1.5s<3s<10s; auto-stop por tiempo (10s) como red superior.",
+        "Constantes (SPEECH_THRESHOLD≈0.06, SILENCE_HANG_MS, NO_SPEECH_TIMEOUT_MS, SAMPLE_MS) en el motor, NO en el schema de marca (comportamiento común, como el límite de 15). Valores iniciales razonables, CALIBRABLES en runtime con micrófono real.",
+        "Privacidad: análisis local, nada nuevo sale del navegador; si nunca se habla NO se sube audio (menos datos que antes). AudioContext.close() y cancelación del bucle en TODA salida de recording para no dejar el mic vivo (auditar)."
+      ],
+      "acceptance": [
+        "createSilenceDetector puro (sin AudioContext): secuencia silencio→voz→silencio sostenido ≥SILENCE_HANG_MS emite 'send'; silencio continuo ≥NO_SPEECH_TIMEOUT_MS sin voz previa emite 'no-speech'",
+        "En useVoiceRecorder (AudioContext/AnalyserNode mockeados): 'habló y calló' → auto-envía (transcribeVoice llamado, onResult); 'nunca habló' → no-audio (voice.noSpeech) SIN llamar a transcribeVoice; el mic se libera y AudioContext.close() en todas las salidas",
+        "En NameField: el auto-envío rellena el campo con el clamp de 15 sin 2º clic; el 2º clic manual sigue funcionando; input manual intacto; cero literales ni hex",
+        "Se conserva el auto-stop por tiempo (10s) como red superior; el silencio server-side (Groq '' → no-audio) como segunda red",
+        "Tests en RED antes de implementar (detector puro, useVoiceRecorder con Web Audio mockeado, NameField); sin audio real ni red. Calibración de constantes verificada en runtime"
+      ],
+      "status": "done",
+      "layer": "frontend",
+      "depends_on": ["voice_groq_default"]
     }
   ]
 }

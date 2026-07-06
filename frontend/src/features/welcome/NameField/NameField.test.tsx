@@ -28,7 +28,8 @@
  * test mockea `useVoiceRecorder` (que el componente aún no consume) y afirma el
  * flujo grabar→enviar nuevo → falla hasta la reescritura del componente.
  */
-import { render, screen } from '@testing-library/react';
+import { useState } from 'react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../../../brand/ThemeProvider';
@@ -106,6 +107,34 @@ function renderNameField(initial = '') {
   return { ...utils, onChange, getValue: () => current, rerender };
 }
 
+/**
+ * Wrapper con estado REAL de React: el input controlado refleja cada pulsación
+ * (a diferencia de `renderNameField`, que no re-renderiza entre teclas). Se usa
+ * para las regresiones del teclado, donde importa el valor acumulado del input.
+ * Devuelve el spy de `onChange` para afirmar el último valor propagado.
+ */
+function renderStatefulNameField(initial = ''): ReturnType<typeof vi.fn> {
+  const onChange = vi.fn();
+  function Stateful() {
+    const [name, setName] = useState(initial);
+    return (
+      <NameField
+        value={name}
+        onChange={(next) => {
+          onChange(next);
+          setName(next);
+        }}
+      />
+    );
+  }
+  render(
+    <ThemeProvider config={brand}>
+      <Stateful />
+    </ThemeProvider>,
+  );
+  return onChange;
+}
+
 describe('NameField — contador y límite de 15 (acceptance #9, #7)', () => {
   beforeEach(resetRecorder);
   afterEach(() => vi.clearAllMocks());
@@ -159,6 +188,126 @@ describe('NameField — contador y límite de 15 (acceptance #9, #7)', () => {
     const { onChange } = renderNameField('');
     await user.type(screen.getByRole('textbox'), 'A');
     expect(onChange).toHaveBeenCalledWith('A');
+  });
+});
+
+/**
+ * RED — auto-envío por detección de silencio (feature voice_auto_send, design T3).
+ * El motor está mockeado: simulamos la ruta (a) "habló y calló" invocando el
+ * `onResult` que el componente registró, SIN disparar un segundo click. El campo
+ * debe rellenarse (con el clamp de 15) igual que el 2º clic manual, y el input
+ * manual debe seguir intacto. Cero literales: los textos salen de la marca.
+ */
+describe('NameField — auto-envío del dictado sin 2º clic (voice_auto_send T3.a)', () => {
+  beforeEach(resetRecorder);
+  afterEach(() => vi.clearAllMocks());
+
+  it('el auto-envío (onResult) rellena el campo SIN un 2º clic (no se llama a stop())', () => {
+    const { onChange } = renderNameField('');
+    // Simula la ruta (a): el motor detecta el silencio y emite el texto por su cuenta.
+    recorderMock.onResult?.('Ana');
+    expect(onChange).toHaveBeenCalledWith('Ana');
+    // El auto-envío NO pasa por el click de "enviar": stop() no lo dispara el componente.
+    expect(recorderMock.stop).not.toHaveBeenCalled();
+  });
+
+  it('el auto-envío respeta el clamp de 15 (texto largo se trunca a 15)', () => {
+    const { onChange } = renderNameField('');
+    recorderMock.onResult?.('NombreLarguísimoDeMás');
+    expect(onChange).toHaveBeenCalledWith('NombreLarguísim');
+    expect((onChange.mock.calls.at(-1)?.[0] as string).length).toBe(15);
+  });
+
+  it('el 2º clic manual sigue funcionando: en recording el botón llama a stop()', async () => {
+    const user = userEvent.setup();
+    recorderMock.status = 'recording';
+    recorderMock.isRecording = true;
+    renderNameField('');
+    await user.click(screen.getByRole('button', { name: brand.voice.listeningLabel }));
+    expect(recorderMock.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('el input manual sigue intacto tras un auto-envío previo', async () => {
+    const user = userEvent.setup();
+    const { onChange } = renderNameField('');
+    recorderMock.onResult?.('Ana');
+    onChange.mockClear();
+    await user.type(screen.getByRole('textbox'), 'B');
+    expect(onChange).toHaveBeenCalledWith('B');
+  });
+
+  it('el caso no-speech del auto-envío muestra voice.noSpeech en role="status" (regresión)', () => {
+    recorderMock.status = 'error';
+    recorderMock.errorCode = 'no-audio';
+    renderNameField('');
+    expect(screen.getByRole('status')).toHaveTextContent(brand.voice.noSpeech);
+  });
+});
+
+/**
+ * RED — limpieza de puntuación de borde SOLO en el dictado (decisión del usuario,
+ * 2026-07-05). Whisper/Groq añade puntuación automática ("Juan" → "Juan."), así que
+ * el camino del DICTADO (`onResult`) debe sanitizar los signos de borde antes del
+ * clamp de 15. El corazón del cambio es el CONTRASTE: el dictado limpia, el teclado
+ * NO (si el usuario escribe un punto a mano, es su decisión). El motor sigue mockeado
+ * (cero red/audio): se simula la transcripción invocando el `onResult` registrado.
+ *
+ * RED esperado: `applyName` hoy hace `onChange(clampToMax(transcript))` sin sanitizar,
+ * así que el dictado "Juan." propaga "Juan." (con punto) → el test que espera "Juan"
+ * falla. Los tests del teclado ya pasan (el teclado no debe cambiar) y sirven de
+ * ancla de regresión.
+ */
+describe('NameField — sanitización de puntuación del dictado (decisión 2026-07-05)', () => {
+  beforeEach(resetRecorder);
+  afterEach(() => vi.clearAllMocks());
+
+  it('el DICTADO limpia el punto final de Whisper: onResult("Juan.") propaga "Juan"', () => {
+    const { onChange } = renderNameField('');
+    recorderMock.onResult?.('Juan.');
+    expect(onChange).toHaveBeenCalledWith('Juan');
+  });
+
+  it('el DICTADO limpia los signos de borde: onResult("¿María?") propaga "María"', () => {
+    const { onChange } = renderNameField('');
+    recorderMock.onResult?.('¿María?');
+    expect(onChange).toHaveBeenCalledWith('María');
+  });
+
+  it('el DICTADO conserva el espacio interno y limpia el borde: onResult("  José María.  ") → "José María"', () => {
+    const { onChange } = renderNameField('');
+    recorderMock.onResult?.('  José María.  ');
+    expect(onChange).toHaveBeenCalledWith('José María');
+  });
+
+  it('el DICTADO sanitiza ANTES del clamp: onResult(" NombreLarguísimoDeMás. ") se limpia y luego trunca a 15', () => {
+    const { onChange } = renderNameField('');
+    recorderMock.onResult?.(' NombreLarguísimoDeMás. ');
+    // Primero se quitan el punto y los espacios de borde, luego se recorta a 15.
+    expect(onChange).toHaveBeenCalledWith('NombreLarguísim');
+    expect((onChange.mock.calls.at(-1)?.[0] as string).length).toBe(15);
+  });
+
+  // REGRESIÓN CLAVE — el TECLADO NO limpia: escribir "Juan." a mano deja el punto.
+  // Se usa un wrapper con estado REAL (StatefulNameField) para que el input
+  // controlado refleje cada pulsación; el andamiaje `renderNameField` no
+  // re-renderiza entre teclas y solo registraría el último carácter.
+  it('el TECLADO NO limpia la puntuación: escribir "Juan." deja "Juan." (con el punto)', async () => {
+    const user = userEvent.setup();
+    const onChange = renderStatefulNameField();
+    await user.type(screen.getByRole('textbox'), 'Juan.');
+    // El input controlado termina con el punto que el usuario escribió a mano.
+    expect(screen.getByRole('textbox')).toHaveValue('Juan.');
+    // El último onChange del teclado conserva el punto final del usuario.
+    expect(onChange).toHaveBeenLastCalledWith('Juan.');
+  });
+
+  // REGRESIÓN — el teclado propaga un punto suelto tal cual (no se sanitiza el borde).
+  it('el TECLADO NO limpia un punto inicial: escribir "." deja "." (no lo colapsa a vacío)', async () => {
+    const user = userEvent.setup();
+    const onChange = renderStatefulNameField();
+    await user.type(screen.getByRole('textbox'), '.');
+    expect(screen.getByRole('textbox')).toHaveValue('.');
+    expect(onChange).toHaveBeenLastCalledWith('.');
   });
 });
 
@@ -396,5 +545,116 @@ describe('NameField — white-label / cero literal (F10)', () => {
     recorderMock.errorCode = 'permission-denied';
     renderWithBrand(otherBrand);
     expect(screen.getByRole('status')).toHaveTextContent(otherBrand.voice.permissionDenied);
+  });
+});
+
+/**
+ * RED — feedback de longitud al alcanzar el límite (voice_auto_send, ADR 25).
+ *
+ * El límite del nombre es FIJO en 15 (NAME_MAX_LENGTH). Cuando `value.length` llega
+ * a 15 —da igual si llegó por TECLADO o por DICTADO, ambos recortan a 15 vía
+ * clampToMax— la UI muestra un AVISO de longitud UNIFICADO con el texto de marca
+ * `text.maxLengthReached`, interpolando `{max}` a 15 (mismo patrón que
+ * counterTemplate). Con value < 15 el aviso NO aparece.
+ *
+ * El aviso debe convivir con la región de error de VOZ (role="status") sin taparla:
+ * si hay un errorCode de voz, ese texto sigue visible; con value corto y sin error,
+ * no hay ninguno de los dos.
+ *
+ * Cero literales: el aviso se observa por el texto de marca resuelto
+ * (`brand.text.maxLengthReached` con {max}→15), nunca por un string hardcodeado.
+ * El white-label se verifica con OTRA marca (otherBrand) que define su propio copy.
+ *
+ * RED esperado: el schema aún no tiene `text.maxLengthReached` (parseBrandConfig lo
+ * deja `undefined`) y NameField no renderiza ningún aviso al tope → estos tests
+ * fallan por comportamiento/símbolo ausente, no por sintaxis del test.
+ */
+describe('NameField — feedback de longitud al límite (voice_auto_send, ADR 25)', () => {
+  beforeEach(resetRecorder);
+  afterEach(() => vi.clearAllMocks());
+
+  /**
+   * Resuelve el texto de marca del aviso con {max}→15 (mismo interpolado que el
+   * componente). Tolera que el schema aún no exponga `maxLengthReached` (RED de la
+   * capa schema): en ese caso usa el default esperado del ADR 25, de modo que el
+   * fallo del test sea por AUSENCIA del aviso en el DOM (comportamiento de
+   * NameField), no por un TypeError en este helper.
+   */
+  function maxReachedText(brandConfig: typeof brand): string {
+    const template = brandConfig.text.maxLengthReached ?? 'Máximo {max} caracteres';
+    return template.replace('{max}', '15');
+  }
+
+  it('con value de 15 caracteres (tope alcanzado) muestra el aviso text.maxLengthReached con {max}→15', () => {
+    renderNameField('QuinceCaracter1'); // exactamente 15 chars
+    expect(screen.getByText(maxReachedText(brand))).toBeInTheDocument();
+  });
+
+  it('con value < 15 NO muestra el aviso de longitud', () => {
+    renderNameField('Ana'); // 3 chars
+    expect(screen.queryByText(maxReachedText(brand))).not.toBeInTheDocument();
+  });
+
+  // Unificado — camino TECLADO: escribir un string largo → clampToMax deja 15 → aviso.
+  it('unificado (teclado): escribir un nombre que supera el tope deja 15 y muestra el aviso', async () => {
+    const user = userEvent.setup();
+    renderStatefulNameField();
+    await user.type(screen.getByRole('textbox'), 'NombreDemasiadoLargoParaElCampo');
+    // El input controlado quedó recortado a 15 por maxLength/clamp.
+    expect(screen.getByRole('textbox')).toHaveValue('NombreDemasiado'); // 15 chars
+    expect(screen.getByText(maxReachedText(brand))).toBeInTheDocument();
+  });
+
+  // Unificado — camino DICTADO: onResult con string largo → clamp a 15 → mismo aviso.
+  it('unificado (dictado): onResult con un texto que supera el tope deja 15 y muestra el aviso', () => {
+    // El wrapper stateful refleja en el input el value que propaga applyName.
+    const onChange = renderStatefulNameField();
+    // onResult → applyName → onChange → setName actualiza el estado del wrapper:
+    // se envuelve en act() para que React flushee el re-render antes de afirmar
+    // (mismo patrón que el bloque de useVoiceRecorder). onResult→onChange es
+    // síncrono, así que basta un act() síncrono.
+    act(() => {
+      recorderMock.onResult?.('NombreLarguísimoDeMás');
+    });
+    // El dictado recortó a 15 (sanitiza + clamp).
+    expect((onChange.mock.calls.at(-1)?.[0] as string).length).toBe(15);
+    expect(screen.getByText(maxReachedText(brand))).toBeInTheDocument();
+  });
+
+  // Regresión — el aviso de longitud NO tapa el error de voz existente.
+  it('regresión: con value al tope Y un error de voz, ambos textos siguen visibles', () => {
+    recorderMock.status = 'error';
+    recorderMock.errorCode = 'permission-denied';
+    renderNameField('QuinceCaracter1'); // 15 chars
+    // El error de voz sigue en su región role="status".
+    expect(screen.getByRole('status')).toHaveTextContent(brand.voice.permissionDenied);
+    // Y el aviso de longitud también está presente, sin taparlo.
+    expect(screen.getByText(maxReachedText(brand))).toBeInTheDocument();
+  });
+
+  // Regresión — value corto y sin error: no aparece ni el aviso ni el error.
+  it('regresión: con value corto y sin error de voz, no hay aviso de longitud ni error', () => {
+    renderNameField('Ana');
+    expect(screen.queryByText(maxReachedText(brand))).not.toBeInTheDocument();
+    expect(screen.queryByText(brand.voice.permissionDenied)).not.toBeInTheDocument();
+    expect(screen.queryByText(brand.voice.noSpeech)).not.toBeInTheDocument();
+    expect(screen.queryByText(brand.voice.genericError)).not.toBeInTheDocument();
+  });
+
+  // White-label — el aviso se observa por el copy de OTRA marca, no por un literal.
+  it('white-label: el aviso al tope usa el text.maxLengthReached de la marca activa (cero literal)', () => {
+    const otherBrand = parseBrandConfig({
+      key: 'otra',
+      name: 'Otra',
+      text: { maxLengthReached: 'No más de {max} caracteres, por favor' },
+    });
+    render(
+      <ThemeProvider config={otherBrand}>
+        <NameField value="QuinceCaracter1" onChange={vi.fn()} />
+      </ThemeProvider>,
+    );
+    expect(screen.getByText(maxReachedText(otherBrand))).toBeInTheDocument();
+    // El copy del seed shopinbaz no se filtra.
+    expect(screen.queryByText(maxReachedText(brand))).not.toBeInTheDocument();
   });
 });

@@ -38,6 +38,10 @@ export const brandConfigSchema = z
         inputPlaceholder: z.string().default('Escribe tu nombre'),
         submitLabel: z.string().default('Comenzar'),
         counterTemplate: z.string().default('{count}/{max} caracteres'),
+        // Aviso unificado (teclado y voz) cuando el nombre llega al tope de 15
+        // (ADR 25). Interpola {max} igual que counterTemplate. Con `.default()`
+        // ninguna marca existente edita su JSON (marca nueva = un JSON).
+        maxLengthReached: z.string().default('Máximo {max} caracteres'),
         // Textos del flujo de welcome_screen que las maquetas no muestran
         // (solo capturan el estado inicial). Con `.default()` por campo se
         // mantiene el principio "marca nueva = un JSON" sin tocar componentes.

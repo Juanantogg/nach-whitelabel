@@ -1,5 +1,6 @@
 import { useBrand } from '../../../brand/ThemeProvider';
 import { NAME_MAX_LENGTH } from '../../../brand/core/constants';
+import { sanitizeDictatedName } from '../../../voice/sanitizeDictatedName';
 import { useVoiceRecorder, type RecorderErrorCode } from '../../../voice/useVoiceRecorder';
 
 interface NameFieldProps {
@@ -28,8 +29,10 @@ function clampToMax(value: string): string {
 export function NameField({ value, onChange }: NameFieldProps) {
   const { text, voice } = useBrand();
 
-  // El MISMO clamp de 15 para el teclado y para el dictado.
-  const applyName = (transcript: string): void => onChange(clampToMax(transcript));
+  // El dictado sanitiza la puntuación de borde de Whisper ANTES del clamp de 15;
+  // el teclado (onChange del input) NO sanitiza (el punto que escribe el usuario es suyo).
+  const applyName = (transcript: string): void =>
+    onChange(clampToMax(sanitizeDictatedName(transcript)));
 
   const recorder = useVoiceRecorder({ onResult: applyName });
 
@@ -39,6 +42,11 @@ export function NameField({ value, onChange }: NameFieldProps) {
   const counter = text.counterTemplate
     .replace('{count}', String(value.length))
     .replace('{max}', String(NAME_MAX_LENGTH));
+
+  // Aviso de longitud unificado (teclado y voz): al llegar al tope de 15, ambos
+  // caminos recortan vía clampToMax y se muestra el copy de marca (ADR 25).
+  const maxLengthReached = value.length >= NAME_MAX_LENGTH;
+  const maxLengthText = text.maxLengthReached.replace('{max}', String(NAME_MAX_LENGTH));
 
   /** Mapea el código de error del motor al texto de la marca activa. */
   function recorderErrorText(code: RecorderErrorCode): string {
@@ -147,6 +155,14 @@ export function NameField({ value, onChange }: NameFieldProps) {
       <div role="status" aria-live="polite" className="text-sm text-brand-accent">
         {errorText}
       </div>
+
+      {/* Aviso de longitud al tope (teclado y voz), en su propia región para no
+          tapar el error de voz. Solo se rinde al alcanzar el límite. */}
+      {maxLengthReached && (
+        <div aria-live="polite" className="text-sm text-brand-accent">
+          {maxLengthText}
+        </div>
+      )}
     </div>
   );
 }

@@ -129,6 +129,282 @@ function flush(): Promise<void> {
 
 const noop = (): void => {};
 
+// ---------------------------------------------------------------------------
+// Web Audio API mockeado (feature voice_auto_send, design §"Plan de tests" T2).
+//
+// jsdom NO define `AudioContext`/`AnalyserNode`: sin este doble el motor petaría
+// por "AudioContext is not defined" en vez de por la lógica. Instalamos en
+// `globalThis` un doble controlable que:
+//   - createAnalyser() → un AnalyserNode falso cuyo getByteTimeDomainData rellena el
+//     buffer con `nextLevelByte`. El motor calcula el RMS normalizado sobre esa forma
+//     de onda: byte 128 = silencio (RMS 0); byte lejos de 128 = "voz".
+//   - createMediaStreamSource() → nodo con connect() (no analiza nada real).
+//   - close() → spy que verifica el teardown del AudioContext en cada salida.
+//
+// El test manipula `nextLevelByte` entre ticks de muestreo (SAMPLE_MS) con
+// `vi.advanceTimersByTime` para simular voz (byte alto) / silencio (byte 128).
+// Se asume que el motor muestrea con setInterval (recomendación del design §5,
+// más controlable con fake timers que rAF). Si usara rAF el implementer debe
+// además mockear rAF; este andamiaje cubre el camino setInterval.
+// ---------------------------------------------------------------------------
+
+/** Byte de la forma de onda que el analyser devuelve en el próximo sample. */
+let nextLevelByte = 128; // 128 = silencio (RMS 0)
+
+/** Byte que produce un RMS bien por encima de SPEECH_THRESHOLD (~0.17 > 0.06). */
+const VOICE_BYTE = 150;
+/** Byte de silencio: RMS 0 (por debajo del umbral). */
+const SILENCE_BYTE = 128;
+
+class MockAnalyser {
+  fftSize = 512;
+  frequencyBinCount = 256;
+  connect = vi.fn();
+  getByteTimeDomainData = vi.fn((arr: Uint8Array) => {
+    arr.fill(nextLevelByte);
+  });
+}
+
+class MockAudioContext {
+  static instances: MockAudioContext[] = [];
+  static lastInstance: MockAudioContext | null = null;
+
+  createAnalyser = vi.fn(() => new MockAnalyser());
+  createMediaStreamSource = vi.fn(() => ({ connect: vi.fn() }));
+  close = vi.fn(() => Promise.resolve());
+
+  constructor() {
+    MockAudioContext.instances.push(this);
+    MockAudioContext.lastInstance = this;
+  }
+}
+
+function installAudioMocks(): void {
+  nextLevelByte = SILENCE_BYTE;
+  MockAudioContext.instances = [];
+  MockAudioContext.lastInstance = null;
+  (globalThis as unknown as { AudioContext: unknown }).AudioContext = MockAudioContext;
+}
+
+function uninstallAudioMocks(): void {
+  delete (globalThis as unknown as { AudioContext?: unknown }).AudioContext;
+}
+
+/** Fija el nivel de audio simulado para los próximos ticks de muestreo. */
+function setLevel(byte: number): void {
+  nextLevelByte = byte;
+}
+
+describe('useVoiceRecorder — auto-envío por silencio (voice_auto_send T2.a, T2.b)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    installMediaMocks();
+    installAudioMocks();
+  });
+  afterEach(() => {
+    uninstallAudioMocks();
+    uninstallMediaMocks();
+    vi.useRealTimers();
+  });
+
+  it('T2.a "habló y calló": niveles altos→bajos sostenidos disparan el envío SIN 2º clic (transcribe + onResult)', async () => {
+    const onResult = vi.fn();
+    const transcribe = makeTranscribe('Ana');
+    const { result } = renderHook(() => useVoiceRecorder({ onResult, transcribe }));
+
+    await act(async () => {
+      result.current.start();
+      await flush();
+    });
+    expect(result.current.status).toBe('recording');
+
+    // El usuario habla ~500 ms (nivel alto).
+    setLevel(VOICE_BYTE);
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await flush();
+    });
+    // Todavía no hay envío: sigue grabando.
+    expect(transcribe).not.toHaveBeenCalled();
+
+    // Un chunk de audio disponible (como haría el navegador durante la grabación).
+    act(() => MockMediaRecorder.lastInstance!.emitData());
+
+    // El usuario calla: silencio sostenido más allá de SILENCE_HANG_MS (~1.5 s).
+    setLevel(SILENCE_BYTE);
+    await act(async () => {
+      vi.advanceTimersByTime(2_500);
+      await flush();
+    });
+
+    // El motor paró SOLO (sin stop() manual) y subió el audio a Groq.
+    expect(MockMediaRecorder.lastInstance!.stop).toHaveBeenCalled();
+    expect(transcribe).toHaveBeenCalledTimes(1);
+
+    // Drena las microtareas de la promesa de transcribe antes de aseverar (bajo
+    // fake timers NO se puede usar waitFor: hace polling con timers reales y no
+    // resolvería; se drena con act async, igual que T2.b usa aserción síncrona).
+    await act(async () => {
+      await flush();
+    });
+    expect(onResult).toHaveBeenCalledWith('Ana');
+    expect(result.current.status).toBe('idle');
+  });
+
+  it('T2.b "nunca habló": niveles siempre bajos ≥ NO_SPEECH_TIMEOUT_MS → no-audio SIN llamar a transcribe, mic liberado', async () => {
+    const onResult = vi.fn();
+    const transcribe = makeTranscribe('Ana');
+    const { result } = renderHook(() => useVoiceRecorder({ onResult, transcribe }));
+
+    await act(async () => {
+      result.current.start();
+      await flush();
+    });
+    const track = currentStream.getTracks()[0];
+
+    // Silencio permanente durante más de NO_SPEECH_TIMEOUT_MS (~3 s) — nunca habló.
+    setLevel(SILENCE_BYTE);
+    await act(async () => {
+      vi.advanceTimersByTime(3_500);
+      await flush();
+    });
+
+    // No se sube audio vacío: transcribe jamás se llama.
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(onResult).not.toHaveBeenCalled();
+    // El detector cortó por no-speech: estado error con no-audio (sin waitFor para
+    // no colgar bajo fake timers cuando el motor aún no lo cablea → RED rápido).
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorCode).toBe('no-audio');
+    // El micrófono se liberó al cortar por no-speech.
+    expect(track?.stop).toHaveBeenCalled();
+  });
+});
+
+describe('useVoiceRecorder — teardown del AudioContext y bucle (voice_auto_send T2.c)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    installMediaMocks();
+    installAudioMocks();
+  });
+  afterEach(() => {
+    uninstallAudioMocks();
+    uninstallMediaMocks();
+    vi.useRealTimers();
+  });
+
+  it('ruta (b) no-speech: cierra el AudioContext (close())', async () => {
+    const { result } = renderHook(() =>
+      useVoiceRecorder({ onResult: noop, transcribe: makeTranscribe('Ana') }),
+    );
+    await act(async () => {
+      result.current.start();
+      await flush();
+    });
+    setLevel(SILENCE_BYTE);
+    await act(async () => {
+      vi.advanceTimersByTime(3_500);
+      await flush();
+    });
+    expect(MockAudioContext.lastInstance!.close).toHaveBeenCalled();
+  });
+
+  it('stop() manual: cierra el AudioContext (close())', async () => {
+    const { result } = renderHook(() =>
+      useVoiceRecorder({ onResult: noop, transcribe: makeTranscribe('Ana') }),
+    );
+    await act(async () => {
+      result.current.start();
+      await flush();
+    });
+    act(() => MockMediaRecorder.lastInstance!.emitData());
+    await act(async () => {
+      result.current.stop();
+      await flush();
+    });
+    expect(MockAudioContext.lastInstance!.close).toHaveBeenCalled();
+  });
+
+  it('unmount durante recording: cierra el AudioContext (close()) y libera el mic', async () => {
+    const { result, unmount } = renderHook(() =>
+      useVoiceRecorder({ onResult: noop, transcribe: makeTranscribe('Ana') }),
+    );
+    await act(async () => {
+      result.current.start();
+      await flush();
+    });
+    const track = currentStream.getTracks()[0];
+
+    unmount();
+
+    expect(MockAudioContext.lastInstance!.close).toHaveBeenCalled();
+    expect(track?.stop).toHaveBeenCalled();
+  });
+});
+
+describe('useVoiceRecorder — red de seguridad por tiempo intacta (voice_auto_send T2.d, T2.e)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    installMediaMocks();
+    installAudioMocks();
+  });
+  afterEach(() => {
+    uninstallAudioMocks();
+    uninstallMediaMocks();
+    vi.useRealTimers();
+  });
+
+  it('T2.d voz CONTINUA (nunca cae bajo umbral): el detector NO corta antes; el auto-stop por tiempo (10 s) sí sube el audio', async () => {
+    const transcribe = makeTranscribe('Ana');
+    const { result } = renderHook(() => useVoiceRecorder({ onResult: noop, transcribe }));
+
+    await act(async () => {
+      result.current.start();
+      await flush();
+    });
+
+    // Voz continua durante 9 s: por debajo del tope, el detector no debe enviar
+    // (no hay silencio sostenido). transcribe aún no se llama.
+    setLevel(VOICE_BYTE);
+    await act(async () => {
+      vi.advanceTimersByTime(9_000);
+      await flush();
+    });
+    expect(transcribe).not.toHaveBeenCalled();
+
+    // Un chunk y cruzamos el tope por tiempo (~10 s): auto-stop por tiempo dispara.
+    act(() => MockMediaRecorder.lastInstance!.emitData());
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
+      await flush();
+    });
+    expect(MockMediaRecorder.lastInstance!.stop).toHaveBeenCalled();
+    expect(transcribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('T2.e stop() manual antes del cuelgue de silencio sigue subiendo el audio (transcribe llamado)', async () => {
+    const transcribe = makeTranscribe('Ana');
+    const { result } = renderHook(() => useVoiceRecorder({ onResult: noop, transcribe }));
+
+    await act(async () => {
+      result.current.start();
+      await flush();
+    });
+    // El usuario habla un instante y para a mano antes del hang.
+    setLevel(VOICE_BYTE);
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+      await flush();
+    });
+    act(() => MockMediaRecorder.lastInstance!.emitData());
+    await act(async () => {
+      result.current.stop();
+      await flush();
+    });
+    expect(transcribe).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('useVoiceRecorder — captura y transcripción (R1, R2)', () => {
   beforeEach(installMediaMocks);
   afterEach(uninstallMediaMocks);

@@ -802,3 +802,68 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
 - **Supersede:** la parte del ADR 22 sobre arquitectura de fallback (nativo preferente); las features
   `voice_ux` y `voice_reliability` (UX nativa completa, ADR 14); y la orquestación nativo↔fallback de
   `voice_universal`. El endpoint y la decisión Groq/Whisper del ADR 22 siguen vigentes.
+
+## 24. Detección de silencio local (Web Audio API) + auto-envío del dictado — feature `voice_auto_send`
+
+- **Contexto (2026-07-05):** tras `voice_groq_default` (ADR 23), el dictado es grabar→enviar de 2
+  clics con un único auto-stop **por tiempo** (`MAX_RECORDING_MS = 10 s`). Probando en runtime, el
+  usuario detecta el hueco: si pulsas "grabar" y no hablas, a los 10 s se sube un `Blob` vacío/ruido a
+  Groq igualmente (coste, latencia, cero resultado). Y el envío normal exige un 2º clic manual.
+- **Decisión (con el usuario, 2026-07-05):** añadir **detección de silencio local** con la **Web Audio
+  API** (`AudioContext` + `AnalyserNode` sobre el mismo `MediaStream` de `getUserMedia`) al motor
+  `useVoiceRecorder`, con dos efectos: (a) **auto-envío** cuando el usuario habló y luego calló
+  (silencio sostenido `SILENCE_HANG_MS = 1.5 s` tras haber superado el umbral); (b) **corte con aviso
+  `voice.noSpeech` sin subir audio** cuando nunca se habló (`NO_SPEECH_TIMEOUT_MS = 3 s` siempre bajo
+  umbral). El auto-stop por tiempo (10 s) se conserva como red superior; el silencio server-side (Groq
+  `''`→`no-audio`) como segunda red. La detección se parte en `createSilenceDetector` (lógica temporal
+  pura y testeable) + `createAudioLevelMeter` (borde Web Audio, mide RMS normalizado con
+  `getByteTimeDomainData`) + cableado en el motor.
+- **Distinción (a)/(b):** un flag `hasSpoken` (alguna muestra superó `SPEECH_THRESHOLD ≈ 0.06`) separa
+  "auto-enviar" de "no-speech". Sin voz previa el silencio dispara `no-speech`; con voz previa dispara
+  `send` tras la ventana de cuelgue.
+- **Por qué Web Audio API:** soportada en los 4 navegadores (Chrome/Firefox/Safari/Brave), **100%
+  local**, misma familia que `getUserMedia`/`MediaRecorder` que ya funciona; **no depende del servicio
+  de reconocimiento de Google** que rompió el dictado en Brave con Web Speech (ADR 22/23) — no
+  reintroduce ese problema.
+- **Parámetros:** `SPEECH_THRESHOLD`, `SILENCE_HANG_MS`, `NO_SPEECH_TIMEOUT_MS`, `SAMPLE_MS` como
+  **constantes nombradas del motor**, NO en el schema de marca (comportamiento común a todas las marcas,
+  como el límite de 15). Valores iniciales razonables; se **calibran probando** con micrófono real.
+  Invariante: `SILENCE_HANG_MS < NO_SPEECH_TIMEOUT_MS < MAX_RECORDING_MS`.
+- **Privacidad:** el análisis de nivel es local; **nada nuevo** sale del navegador y en el caso "nunca
+  habló" **ya no se sube** audio (menos datos que antes). Exigencia: `AudioContext.close()` y
+  cancelación del bucle de muestreo en toda salida de `recording` (auto-envío, no-speech, stop manual,
+  auto-stop por tiempo, unmount) para no dejar el micrófono vivo.
+- **Descartado:** (1) detección **server-side** como mecanismo primario — no da auto-envío y sube audio
+  vacío; se conserva solo como segunda red. (2) **Librería VAD** (`vad-web` y afines) — dependencia
+  nueva + modelo WASM/ONNX para un problema que un umbral RMS + ventana temporal resuelve sin
+  dependencias; sobredimensionado.
+- **`requires_approval`: false** — UX del frontend; no toca cifrado/claves/contrato/backend, no añade
+  dependencias, reduce datos subidos.
+
+## 25. Límite de nombre fijo en 15 (NO configurable por marca) + feedback de longitud unificado — feature `voice_auto_send`
+
+- **Contexto (2026-07-05):** probando el dictado, el usuario nota que "Jesus Garcia Peralta" se
+  rellena como "Jesus Garcia Pe" (15 chars exactos): el `clampToMax(15)` corta a media palabra, igual
+  que en el teclado, pero en voz el corte sorprende porque no hay feedback claro de que se alcanzó el
+  tope. Surge la pregunta de si el límite de 15 debería ser **configurable por marca**.
+- **Hallazgo de arquitectura:** el "15" está hardcodeado en TRES sitios independientes —
+  `NameField.tsx` (front), `crypto.controller.ts` `MAX_NAME_LENGTH` (validación 400) y
+  `record.model.ts` `maxlength` (defensa Mongo). El schema de marca ya tiene `counterTemplate`
+  con placeholder `{max}`, pero el valor no se lee de config. Además, **el backend NO lee la config de
+  marca** (los JSON de `brand/data`, `brand/seeds` y S3 los consume solo el front); la marca llega al
+  backend de forma implícita por la URL (`api-<key>`, backend aislado por marca en prod, ADR 20).
+- **Decisión (con el usuario, 2026-07-05):** **el límite se mantiene FIJO en 15, NO configurable.**
+  Solo se añade el **feedback de longitud unificado** (UX): cuando el nombre alcanza los 15 caracteres,
+  se muestra un aviso/error de longitud, tanto en escritura manual como en dictado por voz; ambos
+  siguen recortando a 15. El "15" se centraliza en una constante única del front (deja de duplicarse en
+  literales), pero sigue siendo constante, no config de marca.
+- **Por qué NO configurable ahora:** hacerlo bien exigiría que el límite fuese coherente en front Y
+  backend — y como el backend valida `≤15` por su cuenta (defensa, no puede confiar en el cliente),
+  habría que decidir cómo el backend conoce el límite de cada marca de forma segura (env por backend de
+  marca, o que el backend lea su JSON, o que el front lo mande —esto último inseguro—). Es un cambio de
+  arquitectura fullstack con su propia superficie de seguridad, desproporcionado para el tiempo
+  disponible y para un límite que el enunciado fija en 15. Se deja como posible feature futura
+  (`configurable_name_limit`) si se retoma; el placeholder `{max}` del `counterTemplate` ya deja el
+  camino preparado en el front.
+- **`requires_approval`: false** — el límite no cambia (sigue 15 en los 3 sitios); solo se añade
+  feedback de UX en el front. No toca cifrado, validación del backend ni el contrato.
