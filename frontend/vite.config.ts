@@ -16,6 +16,7 @@ export default defineConfig({
     proxy: {
       '/crypto': 'http://localhost:3001',
       '/names': 'http://localhost:3001',
+      '/voice': 'http://localhost:3001',
       '/health': 'http://localhost:3001',
     },
   },

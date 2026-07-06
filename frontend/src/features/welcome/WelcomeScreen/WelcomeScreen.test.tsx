@@ -13,9 +13,10 @@
  *    --brand-* distintas.
  *
  * Se mockea `useNameSubmission` (la orquestación async ya se prueba aislada en su
- * propio test) para conducir la máquina de estados desde el test, y `useVoiceInput`
- * (borde del sistema). NO se mockea el layout ni el consumo de la config de marca,
- * que es lo que aquí se verifica.
+ * propio test) para conducir la máquina de estados desde el test, y
+ * `useVoiceRecorder` (borde del sistema; único motor de voz tras el REWORK ADR 23).
+ * NO se mockea el layout ni el consumo de la config de marca, que es lo que aquí se
+ * verifica.
  *
  * RED esperado: `./WelcomeScreen` aún no existe → import falla, tests en rojo.
  */
@@ -54,14 +55,13 @@ vi.mock('../useNameSubmission', () => ({
   useNameSubmission: () => submissionMock,
 }));
 
-// --- Mock del hook de voz (borde del sistema). ---
-vi.mock('../../../voice/useVoiceInput', () => ({
-  useVoiceInput: () => ({
+// --- Mock del único motor de voz (borde del sistema). ---
+vi.mock('../../../voice/useVoiceRecorder', () => ({
+  useVoiceRecorder: () => ({
     status: 'idle',
-    isSupported: true,
-    isListening: false,
+    isRecording: false,
+    isTranscribing: false,
     errorCode: null,
-    transcript: '',
     start: vi.fn(),
     stop: vi.fn(),
   }),

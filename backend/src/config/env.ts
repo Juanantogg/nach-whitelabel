@@ -32,6 +32,13 @@ export const env = {
   corsOrigins: parseOrigins(process.env.CORS_ORIGINS ?? DEFAULT_CORS_ORIGIN),
   /** Máximo de peticiones por ventana en el rate-limit de escritura (POST /names). */
   rateLimitMax: Number(process.env.RATE_LIMIT_MAX ?? DEFAULT_RATE_LIMIT_MAX),
+  /**
+   * API key del proveedor de IA para el dictado universal (fallback de voz).
+   * Secreto de entorno (Parameter Store en prod), nunca en el bundle ni logs.
+   * OPCIONAL: si falta, /voice/transcribe responde 500 y el fallback queda
+   * inactivo, pero el resto de la app arranca igual (feature EXTRA/stretch).
+   */
+  groqApiKey: process.env.GROQ_API_KEY ?? '',
 } as const;
 
 export const isProd = env.nodeEnv === 'production';
@@ -60,6 +67,10 @@ const envSchema = z.object({
   // operador de despliegue (no de usuario), por eso no se valida el formato de URL.
   CORS_ORIGINS: z.string().optional().default(DEFAULT_CORS_ORIGIN),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(DEFAULT_RATE_LIMIT_MAX),
+  // Opcional: la feature de dictado universal es EXTRA/stretch; el backend debe
+  // arrancar aunque falte la key (el endpoint responde 500 si se invoca sin ella,
+  // en vez de tumbar el boot). No relaja el fail-fast de Mongo/clave privada.
+  GROQ_API_KEY: z.string().optional().default(''),
 });
 
 /** Configuración validada del entorno (forma normalizada para el bootstrap). */
@@ -70,6 +81,7 @@ export interface ValidatedEnv {
   cryptoPrivateKey: string;
   corsOrigins: string[];
   rateLimitMax: number;
+  groqApiKey: string;
 }
 
 /** Resultado de `validateEnv`: convención "devuelve resultado" (no lanza). */
@@ -85,8 +97,15 @@ export function validateEnv(source: Record<string, string | undefined> = process
   if (!parsed.success) {
     return { success: false, error: parsed.error };
   }
-  const { PORT, NODE_ENV, MONGODB_URI, CRYPTO_PRIVATE_KEY, CORS_ORIGINS, RATE_LIMIT_MAX } =
-    parsed.data;
+  const {
+    PORT,
+    NODE_ENV,
+    MONGODB_URI,
+    CRYPTO_PRIVATE_KEY,
+    CORS_ORIGINS,
+    RATE_LIMIT_MAX,
+    GROQ_API_KEY,
+  } = parsed.data;
   return {
     success: true,
     data: {
@@ -96,6 +115,7 @@ export function validateEnv(source: Record<string, string | undefined> = process
       cryptoPrivateKey: CRYPTO_PRIVATE_KEY,
       corsOrigins: parseOrigins(CORS_ORIGINS),
       rateLimitMax: RATE_LIMIT_MAX,
+      groqApiKey: GROQ_API_KEY,
     },
   };
 }

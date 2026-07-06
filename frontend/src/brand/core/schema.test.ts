@@ -171,3 +171,141 @@ describe('brandConfigSchema — bloque voice (voice_capture, acceptance #12)', (
     expect(config.colors).toEqual(defaults.colors);
   });
 });
+
+/**
+ * RED — voice_universal (design §5.6, SC1). El estado "transcribiendo" del
+ * fallback por IA no tiene equivalente en el flujo nativo ni texto existente que
+ * lo cubra, así que se añade UNA sola clave nueva al bloque `voice`:
+ * `transcribingLabel`, con `.default()` para que ninguna marca existente edite su
+ * JSON (principio "marca nueva = un JSON").
+ *
+ * RED: falla hasta que el implementer añada `voice.transcribingLabel` al schema.
+ * Se prueba el MECANISMO (existencia + default no vacío + JSON que lo omite sigue
+ * válido), no el copy exacto: la fuente de verdad del default es
+ * `parseBrandConfig({}).voice.transcribingLabel`.
+ */
+describe('brandConfigSchema — voice.transcribingLabel (voice_universal, SC1)', () => {
+  it('parseBrandConfig({}) produce voice.transcribingLabel con un default no vacío', () => {
+    const config = parseBrandConfig({});
+
+    expect(config.voice.transcribingLabel).toBeDefined();
+    expect(typeof config.voice.transcribingLabel).toBe('string');
+    expect(config.voice.transcribingLabel.length).toBeGreaterThan(0);
+  });
+
+  it('un JSON de marca que OMITE transcribingLabel sigue siendo válido y rellena el default', () => {
+    const defaults = parseBrandConfig({});
+    // JSON de marca con otros textos de voz pero SIN transcribingLabel.
+    const config = parseBrandConfig({ voice: { startLabel: 'Dicta aquí' } });
+
+    expect(config.voice.startLabel).toBe('Dicta aquí');
+    // El campo omitido cae al default del schema (no un literal).
+    expect(config.voice.transcribingLabel).toBe(defaults.voice.transcribingLabel);
+  });
+
+  it('conserva un transcribingLabel provisto por la marca (white-label)', () => {
+    const config = parseBrandConfig({ voice: { transcribingLabel: 'Convirtiendo tu voz…' } });
+    expect(config.voice.transcribingLabel).toBe('Convirtiendo tu voz…');
+  });
+});
+
+/**
+ * RED — feedback de longitud al límite (voice_auto_send, ADR 25). Cuando el
+ * nombre alcanza el tope FIJO de 15 (por teclado o por dictado, ambos recortan a
+ * 15), la UI muestra un aviso de marca. Se añade UNA sola clave nueva al bloque
+ * `text`: `maxLengthReached`, con `.default('Máximo {max} caracteres')` para que
+ * ninguna marca existente edite su JSON (principio "marca nueva = un JSON").
+ *
+ * RED: falla hasta que el implementer añada `text.maxLengthReached` al schema. Se
+ * prueba el MECANISMO (existencia + default no vacío + placeholder {max} presente
+ * + JSON que lo omite sigue válido), no el copy exacto: la fuente de verdad del
+ * default es `parseBrandConfig({}).text.maxLengthReached`.
+ */
+describe('brandConfigSchema — text.maxLengthReached (voice_auto_send, ADR 25)', () => {
+  it('parseBrandConfig({}) produce text.maxLengthReached con un default no vacío', () => {
+    const config = parseBrandConfig({});
+
+    expect(config.text.maxLengthReached).toBeDefined();
+    expect(typeof config.text.maxLengthReached).toBe('string');
+    expect(config.text.maxLengthReached.length).toBeGreaterThan(0);
+  });
+
+  it('el default de maxLengthReached contiene el placeholder {max} (reusa el patrón de counterTemplate)', () => {
+    const config = parseBrandConfig({});
+    expect(config.text.maxLengthReached).toContain('{max}');
+  });
+
+  it('un JSON de marca que OMITE maxLengthReached sigue siendo válido y rellena el default', () => {
+    const defaults = parseBrandConfig({});
+    // JSON de marca con otros textos pero SIN maxLengthReached.
+    const config = parseBrandConfig({ text: { title: 'Hola' } });
+
+    expect(config.text.title).toBe('Hola');
+    // El campo omitido cae al default del schema (no un literal).
+    expect(config.text.maxLengthReached).toBe(defaults.text.maxLengthReached);
+    // Los demás campos previos de text quedan intactos → marca usable.
+    expect(config.text.counterTemplate).toBe(defaults.text.counterTemplate);
+  });
+
+  it('conserva un maxLengthReached provisto por la marca (white-label)', () => {
+    const config = parseBrandConfig({ text: { maxLengthReached: 'Tope: {max} letras' } });
+    expect(config.text.maxLengthReached).toBe('Tope: {max} letras');
+  });
+});
+
+/**
+ * Contrato de marca de records_list (design.md → §"Tokens y textos de marca").
+ *
+ * El listado de registros necesita su propio sub-bloque de textos, anidado bajo
+ * `text` como `text.records`, con `.prefault({})` en el bloque y `.default()` por
+ * campo: título, cabeceras (nombre/número), y los mensajes de los estados
+ * loading/error/empty. Regla white-label: marca nueva = un JSON, cero literales en
+ * componentes; ninguna marca existente (shopinbaz/elektra) debe editar su JSON.
+ *
+ * RED: falla hasta que el implementer añada el sub-bloque `text.records` al
+ * `brandConfigSchema`. Se prueba el MECANISMO (existencia + relleno por defaults +
+ * preservación de un parcial + tolerancia a JSON sin `records`), no el copy exacto:
+ * la fuente de verdad del default es `parseBrandConfig({}).text.records`.
+ */
+describe('brandConfigSchema — sub-bloque text.records (records_list)', () => {
+  it('un JSON sin records produce text.records con los seis campos completos y usables', () => {
+    const config = parseBrandConfig({});
+
+    // El sub-bloque existe.
+    expect(config.text.records).toBeDefined();
+
+    // Los seis textos mostrables por defecto no vacíos → marca usable sin declararlos.
+    expect(config.text.records.title.length).toBeGreaterThan(0);
+    expect(config.text.records.nameHeader.length).toBeGreaterThan(0);
+    expect(config.text.records.numberHeader.length).toBeGreaterThan(0);
+    expect(config.text.records.loading.length).toBeGreaterThan(0);
+    expect(config.text.records.error.length).toBeGreaterThan(0);
+    expect(config.text.records.empty.length).toBeGreaterThan(0);
+  });
+
+  it('conserva un valor parcial de text.records y rellena el resto con los defaults del schema', () => {
+    const defaults = parseBrandConfig({});
+    const config = parseBrandConfig({ text: { records: { title: 'Mis registros' } } });
+
+    // El valor provisto se respeta.
+    expect(config.text.records.title).toBe('Mis registros');
+    // Los sub-campos no provistos igualan el default del schema (no un literal).
+    expect(config.text.records.nameHeader).toBe(defaults.text.records.nameHeader);
+    expect(config.text.records.numberHeader).toBe(defaults.text.records.numberHeader);
+    expect(config.text.records.loading).toBe(defaults.text.records.loading);
+    expect(config.text.records.error).toBe(defaults.text.records.error);
+    expect(config.text.records.empty).toBe(defaults.text.records.empty);
+  });
+
+  it('un JSON que OMITE por completo el bloque records sigue siendo válido y aplica los defaults', () => {
+    const defaults = parseBrandConfig({});
+    // JSON de marca con otros textos pero SIN records.
+    const config = parseBrandConfig({ text: { title: 'Hola' } });
+
+    expect(config.text.title).toBe('Hola');
+    // records cae al default completo (prefault del sub-bloque).
+    expect(config.text.records).toEqual(defaults.text.records);
+    // Los demás campos previos de text quedan intactos → marca usable.
+    expect(config.text.submitLabel).toBe(defaults.text.submitLabel);
+  });
+});

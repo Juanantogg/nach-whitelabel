@@ -10,11 +10,14 @@
  * La cobertura fina del layout/estados vive en `WelcomeScreen.test.tsx`; aquí solo
  * se afirma que `App` compone la pantalla real bajo la marca inyectada.
  *
- * Se mockean los hooks del borde (`useNameSubmission`, `useVoiceInput`) igual que
- * en los tests de welcome, para no arrastrar red/crypto/SpeechRecognition.
+ * Se mockean los hooks del borde (`useNameSubmission`, `useVoiceRecorder`) igual
+ * que en los tests de welcome, para no arrastrar red/crypto/getUserMedia. Tras el
+ * REWORK de voz (ADR 23) el único motor es `useVoiceRecorder` (Groq); ya no existe
+ * `useVoiceInput`.
  */
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import App from './App';
 import { ThemeProvider } from './brand/ThemeProvider';
 import { parseBrandConfig } from './brand/core/schema';
@@ -31,13 +34,12 @@ vi.mock('./features/welcome/useNameSubmission', () => ({
   }),
 }));
 
-vi.mock('./voice/useVoiceInput', () => ({
-  useVoiceInput: () => ({
+vi.mock('./voice/useVoiceRecorder', () => ({
+  useVoiceRecorder: () => ({
     status: 'idle',
-    isSupported: true,
-    isListening: false,
+    isRecording: false,
+    isTranscribing: false,
     errorCode: null,
-    transcript: '',
     start: vi.fn(),
     stop: vi.fn(),
   }),
@@ -47,9 +49,14 @@ const brand = parseBrandConfig(shopinbazSeed);
 
 describe('App', () => {
   it('renderiza la pantalla de bienvenida con los textos de la marca activa', () => {
+    // Tras records_list (ADR 27) App declara <Routes>; necesita un Router ancestro.
+    // En "/" la ruta activa es WelcomeScreen. main.tsx pone <BrowserRouter>; aquí
+    // se usa <MemoryRouter> en la home para conducir la ruta desde el test.
     render(
       <ThemeProvider config={brand}>
-        <App />
+        <MemoryRouter initialEntries={['/']}>
+          <App />
+        </MemoryRouter>
       </ThemeProvider>,
     );
 
