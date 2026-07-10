@@ -550,7 +550,91 @@ Pendiente (no bloqueante): dominio bonito `api-dev`, clonar a prod, GitHub Actio
 
 ---
 
-## Cómo destruir todo (al terminar la evaluación)
+## Cómo destruir todo (al terminar la evaluación) — EJECUTADO ✅ (2026-07-10)
 
-Se completará al final con los comandos `delete-*` en orden inverso. Recordatorio
-clave del ADR 9: **App Runner NO es free tier**, apagarlo/eliminarlo es lo primero.
+Recordatorio clave del ADR 9: **App Runner NO es free tier**, apagarlo/eliminarlo es lo
+primero. La destrucción se ejecutó el **2026-07-10** por decisión del usuario, y se amplió
+a una **limpieza total de la cuenta** (incluyó infra personal ajena a esta prueba, ver abajo).
+
+### Orden de destrucción (dependencias)
+
+1. **App Runner primero** (corta el gasto): `delete-service` × 3 + `delete-connection` (`nach-github`).
+2. **CloudFront** (lento, ~propagación): `update-distribution` con `Enabled:false` → esperar
+   `Status=Deployed` → `delete-distribution` con `--if-match <ETag>`. Luego `delete-origin-access-control`.
+   > En esta ejecución las 7 distros llegaron a `Deployed` en pocos minutos (no los ~15-20 temidos).
+3. **S3**: `s3 rm --recursive` + `delete-bucket` × 3.
+4. **SSM**: `delete-parameters` (los 6 `/nach/**`).
+5. **ACM**: `delete-certificate` × 2 (solo posible tras soltar las CloudFront que los usaban).
+6. **IAM**: soltar policies (detach managed + delete inline) antes de `delete-role`; borrar el
+   OIDC provider (`token.actions.githubusercontent.com`) y los usuarios (keys → login-profile → user).
+7. **CloudWatch log groups** de App Runner (`delete-log-group`).
+
+### Comandos ejecutados (referencia)
+
+```bash
+# 1. App Runner (los 3 ARNs del runbook) + connection
+aws apprunner delete-service --region us-east-1 --service-arn <arn>   # ×3
+aws apprunner delete-connection --region us-east-1 --connection-arn <arn-nach-github>
+
+# 2. CloudFront: disable → Deployed → delete (por cada Id)
+aws cloudfront get-distribution-config --id <ID>                      # captura ETag + config
+#   editar Enabled:false, luego:
+aws cloudfront update-distribution --id <ID> --distribution-config file://cfg.json --if-match <ETag>
+aws cloudfront delete-distribution --id <ID> --if-match <ETag-nuevo>  # tras Status=Deployed
+aws cloudfront delete-origin-access-control --id E2EF0EB660ONNE --if-match <ETag>
+
+# 3. S3
+aws s3 rm s3://<bucket> --recursive && aws s3api delete-bucket --bucket <bucket>   # ×3
+
+# 4. SSM
+aws ssm delete-parameters --region us-east-1 --names /nach/dev/... /nach/elektra/... /nach/shopinbaz/...
+
+# 5. ACM
+aws acm delete-certificate --region us-east-1 --certificate-arn <arn>   # ×2
+
+# 6. IAM (por rol: detach/delete policies → delete-role; luego OIDC y usuarios)
+aws iam delete-open-id-connect-provider --open-id-connect-provider-arn <arn-github-oidc>
+```
+
+### Recursos Natch destruidos (verificado a `0`)
+
+| Recurso | Cantidad |
+|---|---|
+| App Runner services + connection | 3 + 1 |
+| CloudFront distros + OAC | 6 + 1 |
+| S3 buckets | 3 (`dev.` `brands.` `prod-front.garcia3apps.com`) |
+| ACM certs | 2 (`8872b2af` dev, `f9f26036` prod) |
+| SSM SecureString | 6 (`/nach/{dev,elektra,shopinbaz}/{MONGODB_URI,CRYPTO_PRIVATE_KEY}`) |
+| IAM roles Nach + OIDC provider | 4 + 1 |
+| CloudWatch log groups | todos los de App Runner |
+
+### Limpieza extra (infra personal 2019, ajena a la prueba — a petición del usuario)
+
+La cuenta tenía proyectos personales antiguos (Amplify 2019) que **no generaban gasto
+apreciable** (todo céntimos o $0) pero se borraron por petición de "cuenta 100% limpia":
+AppSync `prueba-dev` + 3 tablas DynamoDB, 2 Cognito user pools + 2 identity pools, 12 Lambdas,
+2 apps Pinpoint, ~68 roles + 5 policies de Amplify, 1 CloudFront + bucket de hosting de 2019,
+identidad SES `juananto111@gmail.com`, y los usuarios IAM `test-source-data` y `nach-whitelabel-cli`.
+
+**Conservado:** usuario IAM `Juananto11` (login de consola del usuario) y los `AWSServiceRole*`
+gestionados por AWS. Las 3 KMS keys `alias/aws/{ssm,acm,dynamodb}` son AWS-managed → no se borran.
+
+### Coste
+
+Factura de julio 2026 ≈ **$8-9 USD**, casi todo **App Runner** ($7.47 los ~10 días encendido) +
+impuestos ($1.20). Ya estaba devengado antes del borrado. Resto de servicios: fracciones de
+céntimo. **Agosto: $0.**
+
+### Fuera de AWS (lo hizo el usuario manualmente)
+
+1. **Namecheap — BORRADO ✅** — eliminados los CNAMEs de `garcia3apps.com` (dev, brands,
+   api-dev, elektra, shopinbaz, api-elektra, api-shopinbaz + los `_hash` de validación ACM).
+2. **MongoDB Atlas — BORRADO ✅** — eliminados los 3 proyectos/clusters (elektra, dev,
+   shopinbaz) junto con sus datos.
+3. **GitHub** _(opcional, no destructivo)_ — desinstalar la GitHub App de AWS App Runner del
+   repo; revisar Dependabot.
+4. **Local** _(opcional)_ — las keys en `~/.aws/credentials` (perfil `nach-whitelabel-cli`)
+   ya no sirven; se puede limpiar el perfil.
+
+**Con dominios y bases de datos borrados, el desmantelamiento está COMPLETO:** no queda infra
+AWS, ni DNS apuntando a nada, ni datos en Atlas. Solo se conserva el usuario IAM `Juananto11`.

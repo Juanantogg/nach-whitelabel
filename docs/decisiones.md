@@ -927,3 +927,41 @@ y da la versión resumida; este archivo guarda el razonamiento completo.
     listado es instrumento de verificación, no una feature de producto para el usuario final.
   - **Proteger `/records` con auth:** no hay sistema de usuarios (ADR 10) y los datos no son sensibles
     (ADR 26); montar auth para esto sería scope injustificado.
+
+## 28. Acceso de red de MongoDB Atlas por marca: `0.0.0.0/0` en la demo (VPC+PrivateLink sería lo de prod) — incidente `/records` en Elektra
+
+- **Contexto (2026-07-06):** tras desplegar `records_list` a producción, `/records` funcionaba en
+  **shopinbaz** pero fallaba en **Elektra** (la SPA cargaba pero la tabla daba error). Diagnóstico por
+  logs de App Runner: el backend de Elektra **arrancaba y crasheaba en el `bootstrap`** con
+  `MongooseServerSelectionError: ... IP that isn't whitelisted` contra su cluster Atlas
+  (`cluster0.zrqcd9w`, BD `elektra`). Al morir antes de responder `/health`, App Runner marcaba el
+  health check como fallido y hacía **rollback** a la versión anterior — la que aún NO tenía la ruta
+  `/records` → **404** del `notFoundHandler`. shopinbaz (cluster `cluster0.7btehcz`) no fallaba porque
+  su acceso de red estaba abierto. **No era un bug del código** (`RecordsList.tsx` correcto): era infra.
+- **Causa raíz:** la entrada `0.0.0.0/0` del allowlist de red del cluster de Elektra se había creado
+  con **expiración temporal (horas)** en Atlas y **había caducado**. App Runner no expone IP de salida
+  estática (sin VPC connector), así que al cerrarse la red, ninguna instancia podía conectar.
+- **Decisión (con el usuario, 2026-07-06):**
+  - Para la **demo/prueba técnica**: allowlist **`0.0.0.0/0` en los tres clusters** (elektra, shopinbaz,
+    dev), con **expiración a una semana** (no permanente, porque la infra es **desechable**: se elimina
+    al terminar la evaluación). Tras reabrir la red + `start-deployment`, Elektra quedó `RUNNING` y
+    `/records` = 200 sirviendo datos reales.
+  - Se asume el trade-off conscientemente: `0.0.0.0/0` deja la BD accesible desde cualquier IP; la
+    barrera efectiva es **credencial fuerte + rol mínimo** y el secreto **`MONGODB_URI` en SSM
+    SecureString** (nunca en el repo), que ya estaba así.
+- **Por qué:**
+  - **Lo correcto de producción real** sería un **VPC connector en App Runner con NAT Gateway de IP
+    fija (Elastic IP)** y allowlist de **solo esa IP** en Atlas (o PrivateLink/peering), sacando el
+    tráfico de internet público. Pero eso cuesta (~32 USD/mes de NAT + PrivateLink) — **desproporcionado
+    para una demo desechable**.
+  - `0.0.0.0/0` es exactamente lo que shopinbaz ya usaba y funcionaba; homogeneizar los tres clusters
+    evita el fallo intermitente por marca.
+- **Trampa a recordar:** una entrada de allowlist **temporal caduca sin avisar** y tumba los deploys
+  (health check → rollback). Si la evaluación se alarga **más de 7 días**, hay que renovar la entrada o
+  ponerla **sin expiración**; sospechar SIEMPRE del allowlist ante un `ServerSelectionError` en el boot.
+- **Descartado:**
+  - **VPC connector + NAT + PrivateLink:** la arquitectura correcta de prod, pero coste y complejidad
+    injustificados para infra que se destruye al acabar la prueba. Se menciona como "lo que haría en
+    producción real", sin montarlo.
+  - **`0.0.0.0/0` permanente:** más robusto que temporal (no caduca), pero se prefirió temporal-a-una-
+    semana alineado con que toda la infra es efímera; si la ventana se acerca, se renueva.
