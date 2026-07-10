@@ -246,3 +246,30 @@ el CI, no un 2º revisor). Configurado vía `gh api PUT .../branches/<rama>/prot
 ### Verificado
 Deploy-front en dev: **todos los steps success** (OIDC, build, S3 sync, CloudFront invalidate);
 `dev.garcia3apps.com` → 200. El pipeline despliega el front automáticamente al mergear a dev.
+
+---
+
+## Destrucción de PROD — EJECUTADO ✅ (2026-07-10)
+
+Prod se destruyó junto con dev el **2026-07-10** (limpieza total de la cuenta a petición del
+usuario). Los comandos y el orden de dependencias están en la sección **"Cómo destruir todo"**
+del [`runbook.md`](runbook.md) (dev) — no se duplican aquí. Recursos de prod eliminados:
+
+| Recurso prod | Id / nombre |
+|---|---|
+| App Runner `nach-elektra-prod` | `.../6e10780f9ab3451abb20ae78073870a0` |
+| App Runner `nach-shopinbaz-prod-v3` | `.../37b65616a75a4dcf8740689b2d2b0c01` |
+| CloudFront front prod (2 aliases) | `EGG76TCOPNRIB` |
+| CloudFront `api-elektra` | `E3QO0FC71M3VXV` |
+| CloudFront `api-shopinbaz` | `EMH6BY4L1OO9Y` |
+| Bucket front prod | `prod-front.garcia3apps.com` |
+| ACM cert prod (`api-elektra`+`api-shopinbaz`) | `f9f26036-5615-4255-aee3-72e6f7f76534` |
+| SSM `/nach/elektra/*` + `/nach/shopinbaz/*` | 4 SecureString |
+| IAM roles `AppRunnerNach-{elektra,shopinbaz}-prod` | 2 |
+
+**Verificado a `0`** en el barrido final (App Runner, CloudFront, S3, ACM, SSM, IAM roles Nach).
+
+**Fuera de AWS — BORRADO ✅ (usuario):** eliminados los CNAMEs de
+`elektra`/`shopinbaz`/`api-elektra`/`api-shopinbaz` en Namecheap, y los **2 Atlas de prod**
+(proyectos `elektra` y `shopinbaz`) con los datos reales de cada marca. Detalle completo en
+la sección de destrucción del runbook de dev. **Desmantelamiento de prod COMPLETO.**
