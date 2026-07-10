@@ -18,6 +18,7 @@ export default defineConfig({
       '/names': 'http://localhost:3001',
       '/voice': 'http://localhost:3001',
       '/health': 'http://localhost:3001',
+      '/records': 'http://localhost:3001',
     },
   },
   test: {
