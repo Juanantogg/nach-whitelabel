@@ -98,6 +98,47 @@ nach-whitelabel/
 └─ .husky/            # git hooks (pre-commit, commit-msg)
 ```
 
+## Arquitectura
+
+Front y back usan **patrones distintos** (no comparten uno único, a propósito):
+cada lado adopta el que mejor encaja con su naturaleza.
+
+### Backend — arquitectura en capas (MVC sin vista / _MSC_)
+
+Flujo `routes → controllers → services → models`. Al ser una **API REST** no hay
+Vista (devuelve JSON, no renderiza HTML), así que el patrón es **por capas** con
+una capa de _Service_ que un MVC de manual no tiene:
+
+| Capa | Responsabilidad | Ejemplo |
+| --- | --- | --- |
+| **routes** | declaran los endpoints | `routes/records.routes.ts` |
+| **controllers** | traducen HTTP ⇄ dominio (status, errores); **cero** lógica de negocio | `controllers/records.controller.ts` |
+| **services** | lógica de negocio pura, sin Express (testeable aislada) | `services/counter.service.ts` (consecutivo atómico) |
+| **models** | esquema + persistencia (Mongoose) | `models/record.model.ts` |
+
+Además `app.ts` (construye la app) está separado de `server.ts` (conecta Mongo y
+abre el puerto) → los endpoints se testean con **Supertest sin abrir puerto ni
+depender de Mongo** ([ADR 7](docs/decisiones.md)).
+
+### Frontend — feature-based + Container/Presentational con hooks (MVVM-like)
+
+Organización **por feature** (no por tipo de archivo) y separación estricta entre
+lógica y render. Los **custom hooks actúan como ViewModel**: concentran el estado
+y el flujo, y la UI solo consume y pinta.
+
+| Rol (≈ MVVM) | Aquí | Ejemplo |
+| --- | --- | --- |
+| **Model** | cifrado + capa de red | `crypto/`, `api/` |
+| **ViewModel** | custom hooks (estado + flujo, aislados de la UI) | `useNameSubmission`, `useVoiceRecorder`, `useRecords` |
+| **View** | componentes `.tsx` (solo props + render) | `WelcomeScreen`, `NameField`, `ResultView` |
+
+Ejemplo: `useNameSubmission` posee la máquina de estados
+`idle → loading → success → error` y el flujo `fetchPublicKey → encryptName →
+POST → decryptNumber`; `WelcomeScreen` solo consume `{ status, numero, submit }`
+y **no sabe cómo se cifra nada**. El **theming white-label se inyecta por Context**
+(`ThemeProvider` + `useBrand()`), como otra fuente de datos del ViewModel — por eso
+los componentes no tienen ni un hex ni un literal.
+
 ## Decisiones de diseño
 
 > 📋 El registro completo de decisiones (contexto, porqué y alternativas
